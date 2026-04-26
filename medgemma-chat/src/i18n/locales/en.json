@@ -1,0 +1,40 @@
+{
+  "chat": {
+    "title": "AI Chat Robot",
+    "placeholder": "Type a message...",
+    "greeting": "How can I help you today?",
+    "send": "Send",
+    "thinking": "Thinking..."
+  },
+  "history": {
+    "title": "Recent",
+    "empty": "No conversations yet",
+    "delete": "Delete",
+    "continueChat": "Continue",
+    "deleteConfirm": "Delete this conversation?",
+    "cancel": "Cancel"
+  },
+  "attachment": {
+    "title": "Attach",
+    "uploadFile": "Upload File / Image",
+    "linkPatient": "Link Patient Info",
+    "takePhoto": "Take Photo"
+  },
+  "patient": {
+    "title": "Patient Information",
+    "name": "Name",
+    "age": "Age",
+    "gender": "Gender",
+    "mrn": "Medical Record No.",
+    "diagnosis": "Diagnosis",
+    "notes": "Notes",
+    "save": "Link Patient",
+    "cancel": "Cancel",
+    "linked": "Patient linked"
+  },
+  "error": {
+    "network": "Network error. Please try again.",
+    "upload": "Failed to upload file.",
+    "generic": "Something went wrong."
+  }
+}
