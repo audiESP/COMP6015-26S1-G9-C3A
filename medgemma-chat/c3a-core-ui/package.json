@@ -1,5 +1,5 @@
 {
-  "name": "medgemma-chat",
+  "name": "c3a-core-ui",
   "version": "1.0.0",
   "description": "MedGemma AI Chat — plug-in medical assistant module",
   "main": "index.js",
@@ -17,6 +17,7 @@
     "expo-image-picker": "~15.1.0",
     "expo-status-bar": "~1.12.1",
     "i18next": "^23.11.5",
+    "intl-pluralrules": "^2.0.1",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-i18next": "^14.1.0",

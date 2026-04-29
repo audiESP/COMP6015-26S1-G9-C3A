@@ -1,7 +1,7 @@
 // src/screens/ChatScreen.tsx
 //
 // ── Drop-in usage ────────────────────────────────────────────────────────────
-//   import { ChatScreen } from './medgemma-chat/src/screens/ChatScreen';
+//   import { ChatScreen } from './c3a-core-ui/src/screens/ChatScreen';
 //   // Use as a full screen or inside a Stack/Tab navigator.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -28,6 +28,7 @@ import { PatientModal } from '../components/PatientModal';
 
 import { useChatStore } from '../store/chatStore';
 import { useChat } from '../hooks/useChat';
+import { setApiBaseUrl } from '../services/api';
 import { Attachment, Message, PatientInfo } from '../types';
 
 // ── Optional: initialise i18n if not done by the host app ───────────────────
@@ -40,7 +41,7 @@ interface Props {
   onClose?: () => void;
 }
 
-export const ChatScreen: React.FC<Props> = ({ onClose }) => {
+export const ChatScreen: React.FC<Props> = ({ apiBaseUrl, onClose }) => {
   const { t } = useTranslation();
   const flatListRef = useRef<FlatList>(null);
 
@@ -69,6 +70,10 @@ export const ChatScreen: React.FC<Props> = ({ onClose }) => {
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [patientModalOpen, setPatientModalOpen] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+
+  useEffect(() => {
+    setApiBaseUrl(apiBaseUrl);
+  }, [apiBaseUrl]);
 
   // Scroll to bottom when messages change
   useEffect(() => {

@@ -1,62 +1,58 @@
-# MedGemma AI Chat — Medical Assistant Module
+# C3A Core
 
-A plug-and-play React Native module for AI-powered medical chat using MedGemma backend.
+Clinical Context-Aware Consultation Assistant split into three HTTP-connected
+layers:
 
-## Tech Stack
-- **React Native** + **TypeScript**
-- **NativeWind** (Tailwind CSS for React Native)
-- **react-i18next** (i18n: English + Chinese)
-- **Python FastAPI** backend → MedGemma model
+- `c3a-core-ui`: React Native / Expo frontend.
+- `c3a-core-api`: FastAPI gateway used by the frontend.
+- `c3a-core-ai`: FastAPI AI service for MedGemma inference and Qdrant RAG.
 
-## Project Structure
-```
-medgemma-chat/
-├── src/
-│   ├── components/        # Reusable UI components
-│   │   ├── ChatBubble.tsx
-│   │   ├── ChatInput.tsx
-│   │   ├── AttachmentMenu.tsx
-│   │   └── HistorySidebar.tsx
-│   ├── screens/
-│   │   └── ChatScreen.tsx
-│   ├── hooks/
-│   │   └── useChat.ts
-│   ├── services/
-│   │   └── api.ts
-│   ├── i18n/
-│   │   ├── index.ts
-│   │   └── locales/
-│   │       ├── en.json
-│   │       └── zh.json
-│   ├── store/
-│   │   └── chatStore.ts
-│   └── types/
-│       └── index.ts
-├── backend/
-│   ├── main.py            # FastAPI server
-│   ├── medgemma_service.py
-│   └── requirements.txt
-└── README.md
-```
+The UI only calls the API layer. The API layer calls the AI layer over HTTP. The
+AI layer owns model inference, retrieval, citations, and PDF ingestion scripts.
 
-## Quick Start
+## Configuration
 
-### Frontend
+Create local `.env` files from the checked-in examples. Do not commit real
+secrets.
+
 ```bash
+cp c3a-core-ui/.env.example c3a-core-ui/.env
+cp c3a-core-api/.env.example c3a-core-api/.env
+cp c3a-core-ai/.env.example c3a-core-ai/.env
+```
+
+Set `QDRANT_URL` and `QDRANT_API_KEY` in `c3a-core-ai/.env`.
+
+## Local Startup
+
+Use three terminals from the project root.
+
+### AI Layer
+
+```bash
+cd c3a-core-ai
+../.venv/bin/python -m main
+```
+
+The AI service runs on `http://127.0.0.1:8001` by default.
+
+### API Layer
+
+```bash
+cd c3a-core-api
+../.venv/bin/python -m main
+```
+
+The API gateway runs on `http://127.0.0.1:8000` by default.
+
+### UI Layer
+
+```bash
+cd c3a-core-ui
 npm install
 npx expo start
 ```
 
-### Backend
-```bash
-cd backend
-pip install -r requirements.txt
-python main.py
-```
+The frontend calls `EXPO_PUBLIC_API_BASE_URL`, which defaults to
+`http://127.0.0.1:8000`.
 
-## Integration
-Import `ChatScreen` into your existing app:
-```tsx
-import { ChatScreen } from './medgemma-chat/src/screens/ChatScreen';
-// Use as a screen or modal in your navigator
-```

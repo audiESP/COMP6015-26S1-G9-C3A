@@ -1,6 +1,7 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
+python-dotenv>=1.0.1
 
 # MedGemma / HuggingFace
 transformers>=4.44.0
@@ -8,6 +9,10 @@ accelerate>=0.30.0
 torch>=2.2.0
 sentencepiece
 Pillow
+
+# RAG / Qdrant
+qdrant-client[fastembed]>=1.14.1
+pypdf>=5.0.0
 
 # Optional: bitsandbytes for 4-bit quantisation (saves VRAM)
 # bitsandbytes>=0.43.0

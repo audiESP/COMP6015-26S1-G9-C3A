@@ -1,0 +1,9 @@
+.env
+c3a-core-api/.env
+c3a-core-ai/.env
+c3a-core-ui/.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
