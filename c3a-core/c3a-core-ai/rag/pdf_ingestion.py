@@ -11,8 +11,8 @@ from pathlib import Path
 from .config import DEFAULT_LANGUAGE
 
 
-TARGET_WORDS = 1500
-OVERLAP_WORDS = 200
+TARGET_WORDS = 450
+OVERLAP_WORDS = 80
 
 DOC_TYPE_BY_FILENAME = {
     "delirium_clinical_care_standard_2021.pdf": "clinical_guideline",
@@ -107,7 +107,7 @@ def extract_pdf_pages(pdf_path: Path) -> list[PageText]:
     for index, page in enumerate(reader.pages, start=1):
         raw_text = page.extract_text() or ""
         cleaned = clean_page_text(raw_text)
-        if not cleaned:
+        if not cleaned or should_skip_page(pdf_path.name, index, cleaned):
             continue
         pages.append(
             PageText(
@@ -171,6 +171,18 @@ def clean_page_text(text: str) -> str:
             continue
         lines.append(line)
     return "\n".join(lines)
+
+
+def should_skip_page(source_filename: str, page_number: int, text: str) -> bool:
+    normalized = normalize_spaces(text).lower()
+    if source_filename == "delirium_clinical_care_standard_2021.pdf":
+        if page_number <= 4 or page_number >= 42:
+            return True
+    if source_filename == "quality-standards-guidance-resource-sep22.pdf":
+        if page_number <= 3 or page_number >= 191:
+            return True
+    reference_markers = normalized.count("available from:") + normalized.count(" doi")
+    return reference_markers >= 4
 
 
 def detect_heading(raw_text: str) -> str:

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
@@ -22,11 +24,24 @@ from medgemma_service import MedGemmaService
 from rag.retriever import RagRetriever
 
 
-load_dotenv()
+SERVICE_DIR = Path(__file__).resolve().parent
+load_dotenv(SERVICE_DIR / ".env", override=False)
+load_dotenv(override=False)
 
-LOG_LEVEL = logging.DEBUG if os.getenv("DEBUG_BACKEND", "").lower() == "true" else logging.INFO
-logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+LOG_LEVEL = logging.DEBUG if os.getenv(
+    "DEBUG_BACKEND", "").lower() == "true" else logging.INFO
+logging.basicConfig(
+    level=LOG_LEVEL, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger(__name__)
+AI_ENABLED = _env_bool("C3A_AI_ENABLED", True)
 
 app = FastAPI(title="C3A Core AI", version="1.0.0")
 
@@ -47,7 +62,7 @@ add_exception_handlers(
     debug_enabled=os.getenv("DEBUG_BACKEND", "").lower() == "true",
 )
 
-service = MedGemmaService()
+service = MedGemmaService(enabled=AI_ENABLED)
 rag_retriever = RagRetriever()
 
 
@@ -93,9 +108,10 @@ class RagSearchRequest(BaseModel):
 @app.on_event("startup")
 async def startup_log_summary():
     logger.info(
-        "C3A Core AI startup port=%s debug_backend=%s model=%s device=%s rag=%s",
+        "C3A Core AI startup port=%s debug_backend=%s ai_enabled=%s model=%s device=%s rag=%s",
         os.getenv("C3A_AI_PORT", "8001"),
         os.getenv("DEBUG_BACKEND", "").lower() == "true",
+        AI_ENABLED,
         service.status().get("model"),
         service.status().get("device"),
         preview_object(rag_retriever.status()),
@@ -116,7 +132,78 @@ def _preview(text: str, limit: int = 180) -> str:
     return f"{compact[:limit]}..."
 
 
-def _rag_payload(chunks) -> dict[str, Any]:
+def _query_preview(text: str, query: str, limit: int = 500) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+
+    terms = _preview_terms(query)
+    if not terms:
+        return _preview(compact, limit)
+
+    lowered = compact.lower()
+    positions = [lowered.find(term)
+                 for term in terms if lowered.find(term) >= 0]
+    if not positions:
+        return _preview(compact, limit)
+
+    start = max(0, min(positions) - 70)
+    end = min(len(compact), start + limit)
+    if end - start < limit:
+        start = max(0, end - limit)
+
+    excerpt = compact[start:end].strip()
+    if start > 0:
+        excerpt = f"...{excerpt}"
+    if end < len(compact):
+        excerpt = f"{excerpt}..."
+    return excerpt
+
+
+def _preview_terms(query: str) -> list[str]:
+    terms = [
+        term
+        for term in re.findall(r"[a-zA-Z][a-zA-Z-]{2,}", query.lower())
+        if term
+        not in {
+            "about",
+            "after",
+            "aged",
+            "care",
+            "common",
+            "does",
+            "from",
+            "have",
+            "older",
+            "patient",
+            "patients",
+            "person",
+            "provider",
+            "providers",
+            "resident",
+            "should",
+            "their",
+            "what",
+            "when",
+            "with",
+            "worker",
+        }
+    ]
+    if {"signs", "symptoms"} & set(terms):
+        terms.extend(
+            [
+                "confused",
+                "forgetful",
+                "attention",
+                "agitated",
+                "withdrawn",
+                "hallucinations",
+            ]
+        )
+    return terms
+
+
+def _rag_payload(chunks, query: str = "") -> dict[str, Any]:
     return {
         "results": [
             {
@@ -127,7 +214,7 @@ def _rag_payload(chunks) -> dict[str, Any]:
                 "section_heading": chunk.section_heading,
                 "score": chunk.score,
                 "doc_type": chunk.doc_type,
-                "text_preview": _preview(chunk.text),
+                "text_preview": _query_preview(chunk.text, query),
             }
             for chunk in chunks
         ]
@@ -143,6 +230,7 @@ async def health():
         "rag": rag_retriever.status(),
         "debug": {
             "debug_backend": os.getenv("DEBUG_BACKEND", "").lower() == "true",
+            "ai_enabled": AI_ENABLED,
             "chat_uses_rag": False,
         },
     }
@@ -159,8 +247,10 @@ async def chat(req: AiChatRequest):
         bool(req.patientContext),
         _preview(latest_user_query),
     )
-    logger.debug("AI POST /ai/chat payload=%s", preview_object(req.model_dump(exclude_none=True)))
-    logger.info("AI POST /ai/chat RAG is disabled for chat; use /ai/rag/search separately")
+    logger.debug("AI POST /ai/chat payload=%s",
+                 preview_object(req.model_dump(exclude_none=True)))
+    logger.info(
+        "AI POST /ai/chat RAG is disabled for chat; use /ai/rag/search separately")
 
     generation_started_at = time.perf_counter()
     reply = await service.generate_reply(
@@ -180,7 +270,8 @@ async def chat(req: AiChatRequest):
         rag={"results": [], "enabled_for_chat": False},
         model=service.status(),
     )
-    logger.debug("AI POST /ai/chat response=%s", preview_object(response.model_dump()))
+    logger.debug("AI POST /ai/chat response=%s",
+                 preview_object(response.model_dump()))
     return response
 
 
@@ -204,7 +295,7 @@ async def rag_search(req: RagSearchRequest):
         results = rag_retriever.store.search(req.query, req.topK)
     else:
         results = await rag_retriever.retrieve(req.query)
-    payload = _rag_payload(results)
+    payload = _rag_payload(results, req.query)
     payload["status"] = rag_retriever.status()
     logger.info(
         "AI POST /ai/rag/search completed results=%s",

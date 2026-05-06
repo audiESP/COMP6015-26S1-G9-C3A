@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import asdict
@@ -118,6 +119,35 @@ class QdrantKnowledgeStore:
             logger.info("Upserted %s/%s chunks", total, len(chunks))
         return total
 
+    def delete_by_source_filename(self, source_filename: str) -> int:
+        from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+        selector = FilterSelector(
+            filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="source_filename",
+                        match=MatchValue(value=source_filename),
+                    )
+                ]
+            )
+        )
+        existing_count = self.client.count(
+            collection_name=self.settings.collection_name,
+            count_filter=selector.filter,
+            exact=True,
+        ).count
+        if existing_count == 0:
+            return 0
+
+        self.client.delete(
+            collection_name=self.settings.collection_name,
+            points_selector=selector,
+            wait=True,
+        )
+        logger.info("Deleted %s existing chunks for %s", existing_count, source_filename)
+        return int(existing_count)
+
     def search(self, query: str, top_k: int | None = None) -> list[RetrievedChunk]:
         started_at = time.perf_counter()
         vector = self.embedding_provider.embed_texts([query])[0]
@@ -128,12 +158,13 @@ class QdrantKnowledgeStore:
         )
         client = self.client
         limit = top_k or self.settings.top_k
+        candidate_limit = max(limit * 4, min(20, limit + 10))
 
         try:
             response = client.query_points(
                 collection_name=self.settings.collection_name,
                 query=vector,
-                limit=limit,
+                limit=candidate_limit,
                 with_payload=True,
             )
             points = response.points
@@ -141,17 +172,17 @@ class QdrantKnowledgeStore:
             points = client.search(
                 collection_name=self.settings.collection_name,
                 query_vector=vector,
-                limit=limit,
+                limit=candidate_limit,
                 with_payload=True,
             )
 
-        results: list[RetrievedChunk] = []
+        candidates: list[RetrievedChunk] = []
         for point in points:
             payload = point.payload or {}
             text = str(payload.get("text", "")).strip()
             if not text:
                 continue
-            results.append(
+            candidates.append(
                 RetrievedChunk(
                     text=text,
                     score=float(getattr(point, "score", 0.0)),
@@ -163,10 +194,12 @@ class QdrantKnowledgeStore:
                     doc_type=str(payload.get("doc_type", "")),
                 )
             )
+        results = _rank_results(query, candidates, limit)
         logger.info(
-            "Qdrant search completed collection=%s limit=%s results=%s elapsed_ms=%.1f",
+            "Qdrant search completed collection=%s limit=%s candidates=%s results=%s elapsed_ms=%.1f",
             self.settings.collection_name,
             limit,
+            len(candidates),
             len(results),
             (time.perf_counter() - started_at) * 1000,
         )
@@ -182,3 +215,98 @@ def chunk_to_payload(chunk: Any) -> dict[str, Any]:
 def _stable_point_id(chunk: dict[str, Any]) -> str:
     key = f"{chunk['doc_id']}:{chunk['chunk_index']}:{chunk['content_hash']}"
     return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
+
+
+def _rank_results(query: str, candidates: list[RetrievedChunk], limit: int) -> list[RetrievedChunk]:
+    if not candidates:
+        return []
+
+    ranked = sorted(
+        candidates,
+        key=lambda chunk: _ranking_score(query, chunk),
+        reverse=True,
+    )
+    filtered = [chunk for chunk in ranked if not _is_low_value_chunk(chunk)]
+    if len(filtered) >= limit:
+        return filtered[:limit]
+    return (filtered + [chunk for chunk in ranked if chunk not in filtered])[:limit]
+
+
+def _ranking_score(query: str, chunk: RetrievedChunk) -> float:
+    return chunk.score + (_lexical_overlap_score(query, chunk.text) * 0.03)
+
+
+def _lexical_overlap_score(query: str, text: str) -> float:
+    query_terms = _query_terms(query)
+    if not query_terms:
+        return 0.0
+
+    normalized = text.lower()
+    matches = sum(1 for term in query_terms if term in normalized)
+    return matches / len(query_terms)
+
+
+def _query_terms(query: str) -> set[str]:
+    stop_words = {
+        "about",
+        "after",
+        "aged",
+        "care",
+        "clinicians",
+        "common",
+        "could",
+        "does",
+        "from",
+        "have",
+        "help",
+        "older",
+        "patient",
+        "patients",
+        "person",
+        "provider",
+        "providers",
+        "resident",
+        "should",
+        "their",
+        "what",
+        "when",
+        "with",
+        "worker",
+    }
+    terms = {
+        term
+        for term in re.findall(r"[a-zA-Z][a-zA-Z-]{2,}", query.lower())
+        if term not in stop_words
+    }
+    if {"signs", "symptoms"} & terms:
+        terms.update(
+            {
+                "agitated",
+                "attention",
+                "confused",
+                "delusions",
+                "drowsy",
+                "forgetful",
+                "hallucinations",
+                "restless",
+                "sleep",
+                "withdrawn",
+            }
+        )
+    if {"language", "barriers", "understand"} & terms:
+        terms.update({"communicate", "communication", "interpreter", "interpreting", "translation"})
+    return terms
+
+
+def _is_low_value_chunk(chunk: RetrievedChunk) -> bool:
+    heading = chunk.section_heading.strip().lower()
+    text = chunk.text.strip().lower()
+    if heading in {"contents", "copyright", "references", "acknowledgements"}:
+        return True
+    if re.match(r"^\d+\.\s+[a-z].*(journal|guideline|therapeutic|bmj|cochrane|available from)", heading):
+        return True
+    if chunk.page_start >= 42 and chunk.source_filename == "delirium_clinical_care_standard_2021.pdf":
+        return True
+    if text.count(" available from:") >= 3 or text.count(" doi") >= 3:
+        return True
+    return False
