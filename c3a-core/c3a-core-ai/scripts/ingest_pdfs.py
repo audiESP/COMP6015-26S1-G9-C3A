@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional document type override for every imported PDF.",
     )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Delete existing chunks for each source PDF before importing it.",
+    )
     return parser.parse_args()
 
 
@@ -57,6 +62,10 @@ def main() -> None:
         if not chunks:
             logger.warning("Skipped PDF with no extractable text: %s", pdf_path)
             continue
+
+        if args.replace:
+            deleted = store.delete_by_source_filename(pdf_path.name)
+            logger.info("Removed %s existing chunks for %s", deleted, pdf_path.name)
 
         payloads = [chunk.to_payload() for chunk in chunks]
         upserted = store.upsert_chunks(payloads)

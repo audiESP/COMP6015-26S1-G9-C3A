@@ -63,6 +63,13 @@ def _preview(text: str, limit: int = 180) -> str:
     return f"{compact[:limit]}..."
 
 
+def _reply_with_sources(reply: str, sources: list[str]) -> str:
+    if not sources:
+        return reply
+    source_lines = "\n".join(f"{index}. {source}" for index, source in enumerate(sources, start=1))
+    return f"{reply.rstrip()}\n\nSources:\n{source_lines}"
+
+
 @app.on_event("startup")
 async def startup_log_summary():
     logger.info(
@@ -108,7 +115,7 @@ async def chat(req: ChatRequest, request: Request):
             "API POST /chat ai_response=%s",
             preview_object(ai_response.model_dump()),
         )
-        return ChatResponse(reply=ai_response.reply)
+        return ChatResponse(reply=_reply_with_sources(ai_response.reply, ai_response.sources))
     except AiServiceUnavailable as exc:
         raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 
