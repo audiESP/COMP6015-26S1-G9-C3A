@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
 from medgemma_service import MedGemmaService
+from rag.citations import RetrievedChunk
 from rag.retriever import RagRetriever
 
 
@@ -42,6 +43,9 @@ logging.basicConfig(
     level=LOG_LEVEL, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger(__name__)
 AI_ENABLED = _env_bool("C3A_AI_ENABLED", True)
+CHAT_RAG_ENABLED = _env_bool("CHAT_RAG_ENABLED", True)
+CHAT_RAG_TOP_K = int(os.getenv("CHAT_RAG_TOP_K", os.getenv("RAG_TOP_K", "5")))
+CHAT_RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("CHAT_RAG_MAX_CHARS_PER_CHUNK", "900"))
 
 app = FastAPI(title="C3A Core AI", version="1.0.0")
 
@@ -231,7 +235,7 @@ async def health():
         "debug": {
             "debug_backend": os.getenv("DEBUG_BACKEND", "").lower() == "true",
             "ai_enabled": AI_ENABLED,
-            "chat_uses_rag": False,
+            "chat_uses_rag": CHAT_RAG_ENABLED,
         },
     }
 
@@ -249,25 +253,48 @@ async def chat(req: AiChatRequest):
     )
     logger.debug("AI POST /ai/chat payload=%s",
                  preview_object(req.model_dump(exclude_none=True)))
-    logger.info(
-        "AI POST /ai/chat RAG is disabled for chat; use /ai/rag/search separately")
+    rag_started_at = time.perf_counter()
+    rag_chunks: list[RetrievedChunk] = []
+    if CHAT_RAG_ENABLED and latest_user_query.strip() and rag_retriever.is_configured:
+        rag_chunks = await _retrieve_for_chat(latest_user_query)
+    else:
+        logger.info(
+            "AI POST /ai/chat RAG skipped enabled=%s configured=%s query_present=%s",
+            CHAT_RAG_ENABLED,
+            rag_retriever.is_configured,
+            bool(latest_user_query.strip()),
+        )
+    rag_elapsed_ms = (time.perf_counter() - rag_started_at) * 1000
+    rag_context = _build_chat_rag_context(rag_chunks)
 
     generation_started_at = time.perf_counter()
     reply = await service.generate_reply(
         messages=[(message.role, message.content) for message in req.messages],
         patient=req.patientContext,
         attachments=req.attachments or [],
+        rag_context=rag_context,
     )
     logger.info(
-        "AI POST /ai/chat completed generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
+        "AI POST /ai/chat completed rag_results=%s rag_elapsed_ms=%.1f generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
+        len(rag_chunks),
+        rag_elapsed_ms,
         (time.perf_counter() - generation_started_at) * 1000,
         (time.perf_counter() - started_at) * 1000,
         len(reply),
     )
+    rag_payload = _rag_payload(rag_chunks, latest_user_query)
+    rag_payload.update(
+        {
+            "enabled_for_chat": CHAT_RAG_ENABLED,
+            "used_for_chat": bool(rag_chunks),
+            "top_k": CHAT_RAG_TOP_K,
+            "status": rag_retriever.status(),
+        }
+    )
     response = AiChatResponse(
         reply=reply,
-        sources=[],
-        rag={"results": [], "enabled_for_chat": False},
+        sources=_source_labels(rag_chunks),
+        rag=rag_payload,
         model=service.status(),
     )
     logger.debug("AI POST /ai/chat response=%s",
@@ -303,6 +330,74 @@ async def rag_search(req: RagSearchRequest):
     )
     logger.debug("AI POST /ai/rag/search response=%s", preview_object(payload))
     return payload
+
+
+async def _retrieve_for_chat(query: str) -> list[RetrievedChunk]:
+    if CHAT_RAG_TOP_K == rag_retriever.settings.top_k:
+        return await rag_retriever.retrieve(query)
+
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(
+            None,
+            rag_retriever.store.search,
+            query,
+            CHAT_RAG_TOP_K,
+        )
+    except Exception as exc:
+        logger.warning("AI POST /ai/chat RAG retrieval failed: %s", exc, exc_info=True)
+        return []
+
+
+def _build_chat_rag_context(chunks: list[RetrievedChunk]) -> str:
+    if not chunks:
+        return ""
+
+    evidence_blocks = []
+    for index, chunk in enumerate(chunks, start=1):
+        text = " ".join(chunk.text.split())
+        if len(text) > CHAT_RAG_MAX_CHARS_PER_CHUNK:
+            text = f"{text[:CHAT_RAG_MAX_CHARS_PER_CHUNK].rstrip()}..."
+        evidence_blocks.append(
+            "\n".join(
+                [
+                    f"[Source {index}] {chunk.citation()}",
+                    f"Document type: {chunk.doc_type or 'unknown'}",
+                    f"Evidence: {text}",
+                ]
+            )
+        )
+
+    return (
+        "## Retrieved Clinical Evidence\n"
+        "Use the evidence below to answer the user's question. Prefer these sources over general knowledge. "
+        "If the evidence is insufficient, say what is not covered by the retrieved documents. "
+        "Answer in no more than 5 concise bullet points. "
+        "When relevant, refer to sources using labels such as [Source 1].\n\n"
+        + "\n\n".join(evidence_blocks)
+    )
+
+
+def _source_labels(chunks: list[RetrievedChunk]) -> list[str]:
+    seen: set[str] = set()
+    labels: list[str] = []
+    for chunk in chunks:
+        source = _source_label(chunk)
+        if source in seen:
+            continue
+        seen.add(source)
+        labels.append(source)
+    return labels
+
+
+def _source_label(chunk: RetrievedChunk) -> str:
+    parts = [chunk.source_filename or chunk.source_title]
+    if chunk.source_title and chunk.source_title != chunk.source_filename:
+        parts.append(chunk.source_title)
+    if chunk.section_heading:
+        parts.append(chunk.section_heading)
+    parts.append(chunk.page_label())
+    return " - ".join(part for part in parts if part)
 
 
 if __name__ == "__main__":

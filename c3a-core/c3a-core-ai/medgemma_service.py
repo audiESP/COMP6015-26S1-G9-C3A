@@ -60,6 +60,14 @@ def _build_patient_context(patient) -> str:
     return "\n".join(parts)
 
 
+def _build_rag_context(rag_context) -> str:
+    if not rag_context:
+        return ""
+    if isinstance(rag_context, str):
+        return rag_context.strip()
+    return str(rag_context).strip()
+
+
 class MedGemmaService:
     model_name: str = "google/medgemma-4b-it"
 
@@ -124,6 +132,7 @@ class MedGemmaService:
         messages: list[tuple[str, str]],
         patient=None,
         attachments=None,
+        rag_context=None,
     ) -> str:
         """
         Async wrapper - runs the blocking inference in a thread pool.
@@ -132,7 +141,7 @@ class MedGemmaService:
             return self._demo_reply(messages)
 
         if self.provider == "remote":
-            return await self._remote_generate(messages, patient, attachments or [])
+            return await self._remote_generate(messages, patient, attachments or [], rag_context)
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
@@ -141,13 +150,17 @@ class MedGemmaService:
             messages,
             patient,
             attachments or [],
+            rag_context,
         )
 
-    def _sync_generate(self, messages, patient, attachments) -> str:
+    def _sync_generate(self, messages, patient, attachments, rag_context=None) -> str:
         system_parts = [SYSTEM_PROMPT]
         patient_ctx = _build_patient_context(patient)
         if patient_ctx:
             system_parts.append(patient_ctx)
+        rag_ctx = _build_rag_context(rag_context)
+        if rag_ctx:
+            system_parts.append(rag_ctx)
 
         hf_messages = [
             {"role": "system", "content": "\n\n".join(system_parts)}]
@@ -181,9 +194,9 @@ class MedGemmaService:
             return generated[-1].get("content", "").strip()
         return str(generated).strip()
 
-    async def _remote_generate(self, messages, patient, attachments) -> str:
+    async def _remote_generate(self, messages, patient, attachments, rag_context=None) -> str:
         payload = {
-            "messages": _build_remote_messages(messages, patient),
+            "messages": _build_remote_messages(messages, patient, rag_context),
             "patientContext": _serialise_model(patient),
             "attachments": [_serialise_model(item) for item in attachments],
             "max_new_tokens": int(os.getenv("MEDGEMMA_REMOTE_MAX_NEW_TOKENS", "128")),
@@ -272,11 +285,14 @@ def _normalise_remote_url(raw: str) -> str:
     return f"{url}/generate"
 
 
-def _build_remote_messages(messages, patient) -> list[dict[str, str]]:
+def _build_remote_messages(messages, patient, rag_context=None) -> list[dict[str, str]]:
     system_parts = [SYSTEM_PROMPT]
     patient_ctx = _build_patient_context(patient)
     if patient_ctx:
         system_parts.append(patient_ctx)
+    rag_ctx = _build_rag_context(rag_context)
+    if rag_ctx:
+        system_parts.append(rag_ctx)
 
     remote_messages = [{"role": "system", "content": "\n\n".join(system_parts)}]
     remote_messages.extend({"role": role, "content": content} for role, content in messages)
