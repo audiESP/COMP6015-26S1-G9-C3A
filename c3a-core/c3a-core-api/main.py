@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.ai_client import AiClient, AiServiceUnavailable
+from app.db import DatabaseHealthChecker
 from app.logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
 from app.schemas import ChatRequest, ChatResponse, UploadRequest, UploadResponse
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="C3A Core API", version="1.0.0")
 ai_client = AiClient()
+database_health_checker = DatabaseHealthChecker()
 
 app.add_middleware(
     CORSMiddleware,
@@ -70,14 +72,20 @@ def _reply_with_sources(reply: str, sources: list[str]) -> str:
     return f"{reply.rstrip()}\n\nSources:\n{source_lines}"
 
 
+def _uses_database_context(ai_response) -> bool:
+    database_context = (ai_response.rag or {}).get("database_context", {})
+    return bool(database_context.get("used_for_chat"))
+
+
 @app.on_event("startup")
 async def startup_log_summary():
     logger.info(
-        "C3A Core API startup port=%s debug_backend=%s ai_base_url=%s ai_timeout_seconds=%s",
+        "C3A Core API startup port=%s debug_backend=%s ai_base_url=%s ai_timeout_seconds=%s database_configured=%s",
         os.getenv("C3A_API_PORT", "8000"),
         os.getenv("DEBUG_BACKEND", "").lower() == "true",
         ai_client.base_url,
         ai_client.timeout,
+        database_health_checker.configured,
     )
 
 
@@ -87,6 +95,7 @@ async def health():
         "status": "ok",
         "service": "c3a-core-api",
         "ai": await ai_client.health(),
+        "database": await database_health_checker.health(),
     }
 
 
@@ -115,6 +124,8 @@ async def chat(req: ChatRequest, request: Request):
             "API POST /chat ai_response=%s",
             preview_object(ai_response.model_dump()),
         )
+        if _uses_database_context(ai_response):
+            return ChatResponse(reply=ai_response.reply)
         return ChatResponse(reply=_reply_with_sources(ai_response.reply, ai_response.sources))
     except AiServiceUnavailable as exc:
         raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
