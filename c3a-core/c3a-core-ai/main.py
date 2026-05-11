@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from db_context import DbContextRetriever
 from logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
 from medgemma_service import MedGemmaService
 from rag.citations import RetrievedChunk
@@ -68,6 +69,7 @@ add_exception_handlers(
 
 service = MedGemmaService(enabled=AI_ENABLED)
 rag_retriever = RagRetriever()
+db_context_retriever = DbContextRetriever()
 
 
 class ChatMessage(BaseModel):
@@ -232,6 +234,7 @@ async def health():
         "service": "c3a-core-ai",
         "model": service.status(),
         "rag": rag_retriever.status(),
+        "database_context": db_context_retriever.status(),
         "debug": {
             "debug_backend": os.getenv("DEBUG_BACKEND", "").lower() == "true",
             "ai_enabled": AI_ENABLED,
@@ -266,18 +269,31 @@ async def chat(req: AiChatRequest):
         )
     rag_elapsed_ms = (time.perf_counter() - rag_started_at) * 1000
     rag_context = _build_chat_rag_context(rag_chunks)
+    db_context_started_at = time.perf_counter()
+    db_context_result = await db_context_retriever.retrieve(
+        latest_user_query,
+        patient_context=req.patientContext,
+    )
+    db_context_elapsed_ms = (time.perf_counter() - db_context_started_at) * 1000
+    combined_context = (
+        db_context_result.context
+        if db_context_result.metadata.get("used_for_chat")
+        else rag_context
+    )
 
     generation_started_at = time.perf_counter()
     reply = await service.generate_reply(
         messages=[(message.role, message.content) for message in req.messages],
         patient=req.patientContext,
         attachments=req.attachments or [],
-        rag_context=rag_context,
+        rag_context=combined_context,
     )
     logger.info(
-        "AI POST /ai/chat completed rag_results=%s rag_elapsed_ms=%.1f generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
+        "AI POST /ai/chat completed rag_results=%s rag_elapsed_ms=%.1f db_context_used=%s db_context_elapsed_ms=%.1f generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
         len(rag_chunks),
         rag_elapsed_ms,
+        db_context_result.metadata.get("used_for_chat"),
+        db_context_elapsed_ms,
         (time.perf_counter() - generation_started_at) * 1000,
         (time.perf_counter() - started_at) * 1000,
         len(reply),
@@ -289,6 +305,7 @@ async def chat(req: AiChatRequest):
             "used_for_chat": bool(rag_chunks),
             "top_k": CHAT_RAG_TOP_K,
             "status": rag_retriever.status(),
+            "database_context": db_context_result.metadata,
         }
     )
     response = AiChatResponse(
@@ -370,12 +387,17 @@ def _build_chat_rag_context(chunks: list[RetrievedChunk]) -> str:
 
     return (
         "## Retrieved Clinical Evidence\n"
-        "Use the evidence below to answer the user's question. Prefer these sources over general knowledge. "
-        "If the evidence is insufficient, say what is not covered by the retrieved documents. "
-        "Answer in no more than 5 concise bullet points. "
-        "When relevant, refer to sources using labels such as [Source 1].\n\n"
+        "You must answer primarily from the retrieved evidence below, not from generic medical knowledge. "
+        "Use the exact care pathway, warning signs, actions, or limits described in these sources when they are relevant. "
+        "If the retrieved evidence is only partially relevant, say that clearly and separate evidence-based points from general clinical context. "
+        "For care-worker questions, give a direct answer first, then 3-5 practical actions or signs, and include escalation/red-flag advice. "
+        "Refer to evidence using labels such as [Source 1] when relevant.\n\n"
         + "\n\n".join(evidence_blocks)
     )
+
+
+def _combine_contexts(*contexts: str) -> str:
+    return "\n\n".join(context.strip() for context in contexts if context and context.strip())
 
 
 def _source_labels(chunks: list[RetrievedChunk]) -> list[str]:
