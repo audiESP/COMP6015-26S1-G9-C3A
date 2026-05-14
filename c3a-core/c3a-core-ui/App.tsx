@@ -1,6 +1,6 @@
 import React from 'react';
-import { ChatScreen } from './src/screens/ChatScreen';
+import { VisitScreen } from './src/screens/VisitScreen';
 
 export default function App() {
-  return <ChatScreen />;
+  return <VisitScreen />;
 }

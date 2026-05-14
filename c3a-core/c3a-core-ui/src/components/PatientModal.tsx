@@ -33,6 +33,7 @@ export const PatientModal: React.FC<Props> = ({
   const handleSave = () => {
     if (!form.name?.trim()) return;
     onSave({
+      ...initial,
       id: initial?.id ?? `patient-${Date.now()}`,
       name: form.name!,
       age: form.age,

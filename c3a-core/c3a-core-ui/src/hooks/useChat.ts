@@ -1,7 +1,7 @@
 // src/hooks/useChat.ts
 import { useState, useCallback } from 'react';
 import { sendChatMessage, MedGemmaApiError } from '../services/api';
-import { Attachment, PatientInfo } from '../types';
+import { Attachment, PatientInfo, ScenarioContext } from '../types';
 
 interface UseChatOptions {
   ensureActiveSession: () => string;
@@ -10,12 +10,14 @@ interface UseChatOptions {
     msg: { role: 'user' | 'assistant'; content: string; attachments?: Attachment[] },
   ) => void;
   activeSession: { messages: any[]; patientInfo?: PatientInfo } | null;
+  scenarioContext?: ScenarioContext;
 }
 
 export function useChat({
   ensureActiveSession,
   addMessage,
   activeSession,
+  scenarioContext,
 }: UseChatOptions) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +53,12 @@ export function useChat({
 
         const response = await sendChatMessage({
           messages: [{ role: 'user', content: text.trim() }],
-          patientContext: activeSession?.patientInfo,
+          patientContext: scenarioContext?.patient ?? activeSession?.patientInfo,
+          workerContext: scenarioContext?.worker,
+          visitContext: scenarioContext?.visit,
+          taskContext: scenarioContext?.tasks,
+          eventContext: scenarioContext?.events,
+          riskContext: scenarioContext?.alerts,
           attachments: apiAttachments,
         });
 
@@ -69,7 +76,7 @@ export function useChat({
         setIsLoading(false);
       }
     },
-    [ensureActiveSession, addMessage, activeSession],
+    [ensureActiveSession, addMessage, activeSession, scenarioContext],
   );
 
   return { sendMessage, isLoading, error, clearError: () => setError(null) };
