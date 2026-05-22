@@ -45,6 +45,9 @@ When visit workflow context is provided, tailor the answer to the current
 visit status, task list, recent events, active risks, patient mobility, CALD
 needs, and the health worker's role. Explain what the care worker should do
 next in the real workflow, not only generic clinical facts.
+Treat location data as visit workflow context only. If a location check is
+outside the expected area, advise address confirmation and documentation; do
+not accuse the worker or make surveillance conclusions.
 Always remind the user that AI advice does not replace professional clinical judgment.
 Be concise, accurate, and compassionate."""
 
@@ -110,6 +113,28 @@ def _build_workflow_context(worker=None, visit=None, tasks=None, events=None, ri
             value = getattr(visit, attr, None)
             if value:
                 parts.append(f"- {label}: {value}")
+        if getattr(visit, "plannedAddress", None):
+            parts.append(f"- Planned address: {visit.plannedAddress}")
+        threshold = getattr(visit, "locationThresholdMeters", None)
+        if threshold:
+            parts.append(f"- Location threshold: {threshold} metres")
+        for label, attr in [("Check-in", "checkIn"), ("Check-out", "checkOut")]:
+            snapshot = getattr(visit, attr, None)
+            if snapshot:
+                line = f"- {label}: {getattr(snapshot, 'source', 'unknown')} at {getattr(snapshot, 'timestamp', 'unknown time')}"
+                distance = getattr(snapshot, "distanceFromPlannedMeters", None)
+                if distance is not None:
+                    line += f"; {round(distance)} metres from planned location"
+                accuracy = getattr(snapshot, "accuracyMeters", None)
+                if accuracy is not None:
+                    line += f"; GPS accuracy {round(accuracy)} metres"
+                within = getattr(snapshot, "withinExpectedArea", None)
+                if within is not None:
+                    line += f"; within expected area: {within}"
+                note = getattr(snapshot, "note", None)
+                if note:
+                    line += f"; note: {note}"
+                parts.append(line)
     if tasks:
         parts.append("## Current Care Tasks")
         for task in tasks[:12]:

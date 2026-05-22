@@ -26,12 +26,15 @@ import { useScenarioStore } from '../store/scenarioStore';
 import {
   Attachment,
   CareTask,
+  LocationSnapshot,
   Message,
   PatientInfo,
   RiskAlert,
+  VisitContext,
   VisitLifecycleStep,
   VisitQueueItem,
 } from '../types';
+import { formatDistance } from '../utils/location';
 
 interface Props {
   apiBaseUrl?: string;
@@ -83,9 +86,14 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     visitQueue,
     activeVisitIndex,
     isLastVisit,
+    isLoading: workflowLoading,
+    isSaving: workflowSaving,
+    error: workflowError,
     startVisit,
     completeCurrentTask,
     reportTaskIssue,
+    requestLocationCheckIn,
+    requestLocationCheckOut,
     completeVisit,
     updateTask,
     updatePatient,
@@ -105,7 +113,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     startNewChat,
   } = useChatStore();
 
-  const { sendMessage, isLoading, error } = useChat({
+  const { sendMessage, isLoading: chatLoading, error: chatError } = useChat({
     ensureActiveSession,
     addMessage,
     activeSession,
@@ -121,7 +129,6 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     scenario.tasks[scenario.tasks.length - 1];
   const openTasks = scenario.tasks.filter((task) => task.status !== 'completed');
   const nextStep = getNextStepCopy(scenario.lifecycleStep, scenario.visit.status, currentTask, priorityAlert);
-  const handoverNote = buildHandoverNote(scenario.patient, scenario.tasks, activeAlerts, scenario.visit.status);
   const isCompleted = scenario.visit.status === 'completed' || scenario.lifecycleStep === 'closed';
   const visitsCompleted = visitQueue.filter(
     (visit) => visit.status === 'completed' && visit.id !== scenario.visit.id,
@@ -164,26 +171,47 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
 
   const handlePatientSave = useCallback(
     (patient: PatientInfo) => {
+      if (workflowSaving) return;
       updatePatient(patient);
       linkPatient(ensureActiveSession(), patient);
     },
-    [ensureActiveSession, linkPatient, updatePatient],
+    [ensureActiveSession, linkPatient, updatePatient, workflowSaving],
   );
 
-  const handleIssue = (type: TaskIssueType) => {
-    reportTaskIssue(currentTask.id, type);
+  const handleIssue = async (type: TaskIssueType) => {
+    if (workflowSaving) return;
     setIssueActionsOpen(false);
     setTaskIssueMenuOpen(null);
+    await reportTaskIssue(currentTask.id, type);
     setActiveSection('care');
   };
 
-  const handleTaskIssue = (taskId: string, type: TaskIssueType) => {
-    reportTaskIssue(taskId, type);
+  const handleStartVisitWithCheckIn = useCallback(async () => {
+    if (isCompleted || workflowSaving) return;
+    const checkIn = scenario.visit.checkIn
+      ? undefined
+      : await requestLocationCheckIn('Arrival recorded when starting the visit.');
+    await startVisit(checkIn);
+    setActiveSection('care');
+  }, [isCompleted, requestLocationCheckIn, scenario.visit.checkIn, startVisit, workflowSaving]);
+
+  const handleFinishVisitWithCheckOut = useCallback(async () => {
+    if (isCompleted || workflowSaving) return;
+    const checkOut = scenario.visit.checkOut
+      ? undefined
+      : await requestLocationCheckOut('Departure recorded when finishing the visit.');
+    await completeVisit(checkOut);
+  }, [completeVisit, isCompleted, requestLocationCheckOut, scenario.visit.checkOut, workflowSaving]);
+
+  const handleTaskIssue = async (taskId: string, type: TaskIssueType) => {
+    if (workflowSaving) return;
     setTaskIssueMenuOpen(null);
+    await reportTaskIssue(taskId, type);
     setActiveSection('care');
   };
 
   const handleNextPatient = () => {
+    if (workflowSaving) return;
     goToNextVisit();
     startNewChat();
     setPendingAttachments([]);
@@ -192,6 +220,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   };
 
   const handleSelectVisit = (id: string) => {
+    if (workflowSaving) return;
     selectVisit(id);
     startNewChat();
     setPendingAttachments([]);
@@ -235,6 +264,14 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             </View>
           </View>
 
+          {(workflowLoading || workflowSaving || workflowError) && (
+            <View style={[styles.errorBanner, !workflowError && styles.infoBanner]}>
+              <Text style={[styles.errorText, !workflowError && styles.infoText]}>
+                {workflowError ?? (workflowSaving ? 'Saving visit changes...' : 'Loading visits from database...')}
+              </Text>
+            </View>
+          )}
+
           <VisitSnapshot
             patientName={scenario.patient.name}
             patientMeta={`${scenario.patient.age} yrs · ${scenario.patient.gender} · ${scenario.patient.preferredLanguage}`}
@@ -246,26 +283,32 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
 
           {priorityAlert && <PriorityAlert alert={priorityAlert} />}
 
+          <LocationCheckCard
+            visit={scenario.visit}
+          />
+
           <CurrentTaskCard
             task={currentTask}
             nextStep={nextStep}
           />
 
           <SimpleVisitActions
-              isCompleted={isCompleted}
-              isLastVisit={isLastVisit}
-              visitStarted={visitStarted}
-              currentTask={currentTask}
-              openTaskCount={openTasks.length}
+            isCompleted={isCompleted}
+            isLastVisit={isLastVisit}
+            visitStarted={visitStarted}
+            currentTask={currentTask}
+            openTaskCount={openTasks.length}
+            visit={scenario.visit}
+            disabled={workflowSaving}
             issueActionsOpen={issueActionsOpen}
-            onStartVisit={startVisit}
+            onStartVisit={handleStartVisitWithCheckIn}
             onCompleteTask={completeCurrentTask}
             onToggleIssueActions={() => setIssueActionsOpen((value) => !value)}
             onIssue={handleIssue}
             onAskAi={handleAskAi}
-            onCompleteVisit={completeVisit}
+            onCompleteVisit={handleFinishVisitWithCheckOut}
             onNextPatient={handleNextPatient}
-              onShiftSummary={() => setShiftSummaryOpen((value) => !value)}
+            onShiftSummary={() => setShiftSummaryOpen((value) => !value)}
           />
 
           {shiftSummaryOpen && (
@@ -293,9 +336,9 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
 
           {activeSection === 'assistant' ? (
             <AssistantTab
-              error={error}
+              error={chatError}
               messages={messages}
-              isLoading={isLoading}
+              isLoading={chatLoading}
               contextLabel={`${scenario.patient.name} · ${stepLabels[scenario.lifecycleStep]} · ${currentTask.label}`}
               onOpenHistory={() => setHistoryOpen(true)}
               onEditPatient={() => setPatientModalOpen(true)}
@@ -310,13 +353,14 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               completed={`${completedTasks}/${scenario.tasks.length}`}
               followUp={
                 scenario.visit.status === 'follow_up_required' || scenario.visit.status === 'incident'
-                  ? 'Add follow-up to handover'
+                  ? 'Follow-up needed'
                   : 'No follow-up noted'
               }
-              handoverNote={handoverNote}
               visitStarted={visitStarted}
+              disabled={workflowSaving}
               tasks={scenario.tasks}
               alerts={activeAlerts}
+              visit={scenario.visit}
               onToggleTask={(task) =>
                 updateTask(task.id, task.status === 'completed' ? 'pending' : 'completed')
               }
@@ -333,7 +377,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
           <ChatInput
             onSend={handleSend}
             onPressPlus={() => setAttachMenuOpen(true)}
-            isLoading={isLoading}
+            isLoading={chatLoading || workflowSaving}
             pendingAttachments={pendingAttachments}
             onRemoveAttachment={(id) =>
               setPendingAttachments((prev) => prev.filter((item) => item.id !== id))
@@ -437,6 +481,50 @@ function PriorityAlert({ alert }: { alert: RiskAlert }) {
   );
 }
 
+function LocationCheckCard({ visit }: { visit: VisitContext }) {
+  const checkInWarning = visit.checkIn?.withinExpectedArea === false;
+  const lowAccuracy =
+    (visit.checkIn?.accuracyMeters ?? 0) > 100 ||
+    (visit.checkOut?.accuracyMeters ?? 0) > 100;
+  return (
+    <View style={styles.locationCard}>
+      <View style={styles.locationHeader}>
+        <View style={styles.currentTaskCopy}>
+          <Text style={styles.priorityLabel}>VISIT LOCATION</Text>
+          <Text style={styles.currentTaskTitle}>Arrival and departure</Text>
+          <Text style={styles.currentTaskDetail}>{visit.plannedAddress ?? visit.location}</Text>
+        </View>
+      </View>
+      <View style={styles.locationSummaryGrid}>
+        <LocationSnapshotLine label="Check-in" snapshot={visit.checkIn} />
+        <LocationSnapshotLine label="Check-out" snapshot={visit.checkOut} />
+      </View>
+      {(checkInWarning || lowAccuracy) && (
+        <Text style={styles.locationWarning}>
+          {checkInWarning
+            ? 'Outside expected area. Confirm address and document the reason if this is correct.'
+            : 'Low GPS accuracy. Use manual confirmation if needed.'}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function LocationSnapshotLine({ label, snapshot }: { label: string; snapshot?: LocationSnapshot }) {
+  const detail = snapshot
+    ? `${snapshot.source === 'manual_override' ? 'Manual' : 'GPS'} · ${formatShortTime(snapshot.timestamp)} · ${formatDistance(snapshot.distanceFromPlannedMeters)}`
+    : 'Not recorded';
+  return (
+    <View style={styles.locationMiniPanel}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{detail}</Text>
+      {snapshot?.accuracyMeters !== undefined && (
+        <Text style={styles.locationMeta}>Accuracy {Math.round(snapshot.accuracyMeters)} m</Text>
+      )}
+    </View>
+  );
+}
+
 function CurrentTaskCard({
   task,
   nextStep,
@@ -463,6 +551,8 @@ function SimpleVisitActions({
   visitStarted,
   currentTask,
   openTaskCount,
+  visit,
+  disabled,
   issueActionsOpen,
   onStartVisit,
   onCompleteTask,
@@ -478,6 +568,8 @@ function SimpleVisitActions({
   visitStarted: boolean;
   currentTask: CareTask;
   openTaskCount: number;
+  visit: VisitContext;
+  disabled: boolean;
   issueActionsOpen: boolean;
   onStartVisit: () => void;
   onCompleteTask: () => void;
@@ -494,10 +586,10 @@ function SimpleVisitActions({
         <Text style={styles.priorityLabel}>FINISHED</Text>
         <Text style={styles.currentTaskTitle}>Visit finished</Text>
         <Text style={styles.currentTaskDetail}>
-          The handover note has been updated. Move to the next patient when ready.
+          This visit is closed. Move to the next patient when ready.
         </Text>
         <View style={styles.quickActionBar}>
-          <ActionButton label={isLastVisit ? 'Shift summary' : 'Next patient'} onPress={isLastVisit ? onShiftSummary : onNextPatient} />
+          <ActionButton label={isLastVisit ? 'Shift summary' : 'Next patient'} onPress={isLastVisit ? onShiftSummary : onNextPatient} disabled={disabled} />
           <ActionButton label="Ask AI" tone="muted" onPress={onAskAi} />
         </View>
       </View>
@@ -510,10 +602,15 @@ function SimpleVisitActions({
         <Text style={styles.priorityLabel}>STEP 1</Text>
         <Text style={styles.currentTaskTitle}>Start when you are with the patient</Text>
         <Text style={styles.currentTaskDetail}>
-          This opens the visit and marks arrival. After that, the care checklist becomes active.
+          Starts the visit and records arrival location. After that, the care checklist becomes active.
         </Text>
+        <InlineLocationStatus
+          label="Check-in"
+          snapshot={visit.checkIn}
+          fallback="Will be recorded when starting this visit"
+        />
         <View style={styles.singleActionRow}>
-          <ActionButton label="Start visit" onPress={onStartVisit} />
+          <ActionButton label={disabled ? 'Saving...' : 'Start visit'} onPress={onStartVisit} disabled={disabled} />
         </View>
       </View>
     );
@@ -527,23 +624,54 @@ function SimpleVisitActions({
         {currentTask.detail} {openTaskCount > 1 ? `${openTaskCount} items still need attention.` : 'This is the last open item.'}
       </Text>
       <View style={styles.quickActionBar}>
-        <ActionButton label="Done" tone="success" onPress={onCompleteTask} />
-        <ActionButton label="Problem" tone="warn" onPress={onToggleIssueActions} />
+        <ActionButton label={disabled ? 'Saving...' : 'Done'} tone="success" onPress={onCompleteTask} disabled={disabled} />
+        <ActionButton label="Problem" tone="warn" onPress={onToggleIssueActions} disabled={disabled} />
         <ActionButton label="Ask AI" tone="muted" onPress={onAskAi} />
       </View>
       {issueActionsOpen && (
         <View style={styles.issueGrid}>
-          <ActionButton label="Cannot complete" tone="warn" onPress={() => onIssue('cannot_complete')} />
-          <ActionButton label="Patient declined" tone="warn" onPress={() => onIssue('patient_declined')} />
-          <ActionButton label="Safety concern" tone="danger" onPress={() => onIssue('safety_concern')} />
+          <ActionButton label="Cannot complete" tone="warn" onPress={() => onIssue('cannot_complete')} disabled={disabled} />
+          <ActionButton label="Patient declined" tone="warn" onPress={() => onIssue('patient_declined')} disabled={disabled} />
+          <ActionButton label="Safety concern" tone="danger" onPress={() => onIssue('safety_concern')} disabled={disabled} />
         </View>
       )}
       <View style={styles.finishBox}>
-        <Text style={styles.finishText}>Finished the visit?</Text>
-        <TouchableOpacity style={styles.finishButton} onPress={onCompleteVisit} activeOpacity={0.75}>
-          <Text style={styles.finishButtonText}>Finish visit</Text>
+        <View style={styles.finishCopy}>
+          <Text style={styles.finishText}>Finished the visit?</Text>
+          <Text style={styles.finishHint}>
+            {visit.checkOut
+              ? `Check-out: ${locationSnapshotSummary(visit.checkOut)}`
+              : 'Check-out will be recorded when finishing this visit'}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.finishButton, disabled && styles.finishButtonDisabled]}
+          onPress={onCompleteVisit}
+          activeOpacity={0.75}
+          disabled={disabled}
+        >
+          <Text style={styles.finishButtonText}>{disabled ? 'Saving...' : 'Finish visit'}</Text>
         </TouchableOpacity>
       </View>
+    </View>
+  );
+}
+
+function InlineLocationStatus({
+  label,
+  snapshot,
+  fallback,
+}: {
+  label: string;
+  snapshot?: LocationSnapshot;
+  fallback: string;
+}) {
+  return (
+    <View style={styles.inlineLocationStatus}>
+      <Text style={styles.inlineLocationLabel}>{label}</Text>
+      <Text style={styles.inlineLocationValue}>
+        {snapshot ? locationSnapshotSummary(snapshot) : fallback}
+      </Text>
     </View>
   );
 }
@@ -554,7 +682,7 @@ function ShiftSummary({ total, completed, followUps }: { total: number; complete
       <Text style={styles.priorityLabel}>SHIFT SUMMARY</Text>
       <Text style={styles.currentTaskTitle}>{completed}/{total} visits completed</Text>
       <Text style={styles.currentTaskDetail}>
-        {followUps > 0 ? `${followUps} visit(s) need follow-up or handover attention.` : 'No follow-up visits are currently flagged.'}
+        {followUps > 0 ? `${followUps} visit(s) need follow-up or review attention.` : 'No follow-up visits are currently flagged.'}
       </Text>
     </View>
   );
@@ -624,14 +752,15 @@ function CareDetailsPanel({
   patient,
   worker,
   location,
+  visit,
   status,
   lifecycle,
   completed,
   followUp,
   tasks,
   alerts,
-  handoverNote,
   visitStarted,
+  disabled,
   openIssueTaskId,
   onToggleTask,
   onToggleTaskIssueMenu,
@@ -640,12 +769,13 @@ function CareDetailsPanel({
   patient: PatientInfo;
   worker: string;
   location: string;
+  visit: VisitContext;
   status: string;
   lifecycle: string;
   completed: string;
   followUp: string;
-  handoverNote: string;
   visitStarted: boolean;
+  disabled: boolean;
   openIssueTaskId: string | null;
   tasks: CareTask[];
   alerts: RiskAlert[];
@@ -661,6 +791,8 @@ function CareDetailsPanel({
         <SummaryLine label="Stage" value={lifecycle} />
         <SummaryLine label="Progress" value={completed} />
         <SummaryLine label="Follow-up" value={followUp} />
+        <SummaryLine label="Check-in" value={visit.checkIn ? locationSnapshotSummary(visit.checkIn) : 'Not recorded'} />
+        <SummaryLine label="Check-out" value={visit.checkOut ? locationSnapshotSummary(visit.checkOut) : 'Not recorded'} />
       </View>
 
       <SectionHeader title="Care checklist" detail={visitStarted ? 'Tap Done or Problem' : 'Start visit first'} />
@@ -669,7 +801,7 @@ function CareDetailsPanel({
           <TaskRow
             key={task.id}
             task={task}
-            disabled={!visitStarted}
+            disabled={!visitStarted || disabled}
             issueMenuOpen={openIssueTaskId === task.id}
             onDone={() => onToggleTask(task)}
             onToggleIssue={() => onToggleTaskIssueMenu(task.id)}
@@ -705,11 +837,6 @@ function CareDetailsPanel({
         ) : (
           alerts.map((alert) => <AlertCard key={alert.id} alert={alert} />)
         )}
-      </View>
-
-      <SectionHeader title="Handover note" detail="Draft" />
-      <View style={styles.handoverPanel}>
-        <Text style={styles.handoverText}>{handoverNote}</Text>
       </View>
     </View>
   );
@@ -837,14 +964,21 @@ function ActionButton({
   label,
   tone = 'default',
   onPress,
+  disabled = false,
 }: {
   label: string;
   tone?: 'default' | 'warn' | 'danger' | 'success' | 'muted';
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <TouchableOpacity style={[styles.actionButton, actionTone(tone)]} onPress={onPress} activeOpacity={0.75}>
-      <Text style={styles.actionText}>{label}</Text>
+    <TouchableOpacity
+      style={[styles.actionButton, actionTone(tone), disabled && styles.actionDisabled]}
+      onPress={onPress}
+      activeOpacity={0.75}
+      disabled={disabled}
+    >
+      <Text style={[styles.actionText, disabled && styles.actionTextDisabled]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -862,6 +996,10 @@ function formatScheduleTime(raw: string) {
   return new Date(raw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatShortTime(raw: string) {
+  return new Date(raw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function getNextStepCopy(
   step: VisitLifecycleStep,
   status: string,
@@ -869,7 +1007,7 @@ function getNextStepCopy(
   alert?: RiskAlert,
 ) {
   if (status === 'completed' || step === 'closed') {
-    return 'Review the handover note before moving on';
+    return 'Review visit details before moving on';
   }
   if (alert?.level === 'high') {
     return 'Pause and deal with the safety concern first';
@@ -886,26 +1024,13 @@ function getNextStepCopy(
   return `Continue with ${task.label.toLowerCase()}`;
 }
 
-function buildHandoverNote(
-  patient: PatientInfo,
-  tasks: CareTask[],
-  alerts: RiskAlert[],
-  status: string,
-) {
-  const completed = tasks.filter((task) => task.status === 'completed').length;
-  const openTasks = tasks.filter((task) => task.status !== 'completed').map((task) => task.label);
-  const mainAlert = alerts[0]?.title;
-  const followUp =
-    status === 'follow_up_required' || status === 'incident'
-      ? 'Follow-up should be noted for the next worker.'
-      : 'No follow-up has been flagged yet.';
-
-  return [
-    `${patient.name}: ${completed}/${tasks.length} care items completed.`,
-    openTasks.length ? `Still to check: ${openTasks.slice(0, 2).join(', ')}.` : 'All planned care items are marked complete.',
-    mainAlert ? `Main thing to watch: ${mainAlert}.` : 'No urgent alert is currently shown.',
-    followUp,
-  ].join(' ');
+function locationSnapshotSummary(snapshot: LocationSnapshot) {
+  const source = snapshot.source === 'manual_override' ? 'manual confirmation' : 'GPS';
+  const distance = snapshot.distanceFromPlannedMeters !== undefined
+    ? `, ${formatDistance(snapshot.distanceFromPlannedMeters)} from planned location`
+    : '';
+  const status = snapshot.withinExpectedArea === false ? ', outside expected area' : '';
+  return `${source} at ${formatShortTime(snapshot.timestamp)}${distance}${status}`;
 }
 
 function statusTone(status: string) {
@@ -1006,6 +1131,19 @@ const styles = StyleSheet.create({
   currentTaskCopy: { flex: 1 },
   currentTaskTitle: { color: '#16231E', fontSize: 17, fontWeight: '800', marginTop: 4 },
   currentTaskDetail: { color: '#60746B', fontSize: 12, lineHeight: 18, marginTop: 4 },
+  locationCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    padding: 12,
+    marginTop: 12,
+  },
+  locationHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  locationSummaryGrid: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  locationMiniPanel: { flex: 1, backgroundColor: '#F4F7F6', borderRadius: 8, padding: 10 },
+  locationMeta: { color: '#60746B', fontSize: 11, marginTop: 4 },
+  locationWarning: { color: '#9A6A13', fontSize: 12, fontWeight: '800', lineHeight: 17, marginTop: 8 },
   actionHint: { color: '#60746B', fontSize: 12, marginTop: 10 },
   quickActionBar: { flexDirection: 'row', gap: 8, marginTop: 12 },
   issueGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
@@ -1018,6 +1156,14 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   singleActionRow: { marginTop: 12 },
+  inlineLocationStatus: {
+    backgroundColor: '#F4F7F6',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+  },
+  inlineLocationLabel: { color: '#60746B', fontSize: 11, fontWeight: '900', textTransform: 'uppercase' },
+  inlineLocationValue: { color: '#16231E', fontSize: 12, fontWeight: '700', marginTop: 4, lineHeight: 17 },
   finishBox: {
     backgroundColor: '#F4F7F6',
     borderRadius: 8,
@@ -1027,8 +1173,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  finishText: { color: '#3D4E47', fontSize: 13, fontWeight: '800', flex: 1 },
+  finishCopy: { flex: 1 },
+  finishText: { color: '#3D4E47', fontSize: 13, fontWeight: '800' },
+  finishHint: { color: '#60746B', fontSize: 11, fontWeight: '700', marginTop: 3, lineHeight: 15 },
   finishButton: { backgroundColor: '#2F7D46', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9 },
+  finishButtonDisabled: { backgroundColor: '#9BA9A2' },
   finishButtonText: { color: '#FFFFFF', fontWeight: '900', fontSize: 12 },
   reviewGate: {
     backgroundColor: '#FFFFFF',
@@ -1084,7 +1233,9 @@ const styles = StyleSheet.create({
   actionDanger: { backgroundColor: '#A83B32' },
   actionSuccess: { backgroundColor: '#2F7D46' },
   actionMuted: { backgroundColor: '#4F625A' },
+  actionDisabled: { backgroundColor: '#D6DED9' },
   actionText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800', textAlign: 'center' },
+  actionTextDisabled: { color: '#7A8B83' },
   assistantToolbar: { gap: 8, marginBottom: 10 },
   contextBadge: { backgroundColor: '#E6EFEA', borderRadius: 8, padding: 10 },
   contextBadgeText: { color: '#2E6F73', fontSize: 12, fontWeight: '800' },
@@ -1097,6 +1248,8 @@ const styles = StyleSheet.create({
   emptyChatText: { color: '#60746B', fontSize: 13, marginTop: 6, textAlign: 'center' },
   errorBanner: { backgroundColor: '#FFF5F3', padding: 10, marginHorizontal: 10, borderRadius: 8 },
   errorText: { color: '#A83B32', fontSize: 13 },
+  infoBanner: { backgroundColor: '#F0F8F7' },
+  infoText: { color: '#2E6F73' },
   summaryPanel: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', paddingHorizontal: 12 },
   summaryLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E4ECE8' },
   summaryLabel: { color: '#60746B', fontSize: 12, fontWeight: '800', width: 100 },
@@ -1106,8 +1259,6 @@ const styles = StyleSheet.create({
   timelineTitle: { color: '#16231E', fontSize: 13, fontWeight: '800' },
   timelineTime: { color: '#60746B', fontSize: 12, flex: 1, textAlign: 'right' },
   emptyTimeline: { color: '#60746B', fontSize: 13 },
-  handoverPanel: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', padding: 12 },
-  handoverText: { color: '#3D4E47', fontSize: 13, lineHeight: 20 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', justifyContent: 'flex-start' },
   queueDrawer: { width: '86%', maxWidth: 360, backgroundColor: '#F7FAF8', minHeight: '100%', paddingTop: 54, paddingHorizontal: 14 },
   drawerTitle: { color: '#16231E', fontSize: 22, fontWeight: '900', marginBottom: 14 },

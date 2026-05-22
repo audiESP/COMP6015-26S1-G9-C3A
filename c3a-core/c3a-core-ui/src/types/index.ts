@@ -66,6 +66,30 @@ export type VisitLifecycleStep =
 
 export type CareTaskStatus = 'pending' | 'completed' | 'delayed' | 'skipped' | 'issue';
 
+export type LocationPermissionStatus =
+  | 'unknown'
+  | 'granted'
+  | 'denied'
+  | 'unavailable';
+
+export interface GeoPoint {
+  latitude: number;
+  longitude: number;
+}
+
+export interface LocationSnapshot {
+  id: string;
+  type: 'check_in' | 'check_out';
+  timestamp: string;
+  coords?: GeoPoint;
+  accuracyMeters?: number;
+  distanceFromPlannedMeters?: number;
+  withinExpectedArea?: boolean;
+  permissionStatus: LocationPermissionStatus;
+  source: 'gps' | 'manual_override';
+  note?: string;
+}
+
 export type CareTaskType =
   | 'arrival'
   | 'meal'
@@ -88,6 +112,11 @@ export interface VisitContext {
   scheduledAt: string;
   arrivedAt?: string;
   location: string;
+  plannedAddress?: string;
+  plannedCoords?: GeoPoint;
+  locationThresholdMeters?: number;
+  checkIn?: LocationSnapshot;
+  checkOut?: LocationSnapshot;
   status: VisitStatus;
 }
 
@@ -108,6 +137,10 @@ export interface ScenarioEvent {
     | 'running_late'
     | 'medication_given'
     | 'medication_delayed'
+    | 'location_check_in'
+    | 'location_check_out'
+    | 'location_permission_denied'
+    | 'location_out_of_range'
     | 'patient_unsteady'
     | 'fall_found'
     | 'escalation_triggered'

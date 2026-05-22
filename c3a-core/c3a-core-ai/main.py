@@ -19,7 +19,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from db_context import DbContextRetriever
+from chat_router import RouteDecision, decide_route, with_effective_mode
+from db_context import DbContextResult, DbContextRetriever
 from logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
 from medgemma_service import MedGemmaService
 from rag.citations import RetrievedChunk
@@ -47,6 +48,7 @@ AI_ENABLED = _env_bool("C3A_AI_ENABLED", True)
 CHAT_RAG_ENABLED = _env_bool("CHAT_RAG_ENABLED", True)
 CHAT_RAG_TOP_K = int(os.getenv("CHAT_RAG_TOP_K", os.getenv("RAG_TOP_K", "5")))
 CHAT_RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("CHAT_RAG_MAX_CHARS_PER_CHUNK", "900"))
+CHAT_RAG_MIN_SCORE = float(os.getenv("CHAT_RAG_MIN_SCORE", "0.0"))
 
 app = FastAPI(title="C3A Core AI", version="1.0.0")
 
@@ -104,12 +106,35 @@ class WorkerContext(BaseModel):
     shift: Optional[str] = None
 
 
+class GeoPoint(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class LocationSnapshot(BaseModel):
+    id: Optional[str] = None
+    type: Optional[str] = None
+    timestamp: Optional[str] = None
+    coords: Optional[GeoPoint] = None
+    accuracyMeters: Optional[float] = None
+    distanceFromPlannedMeters: Optional[float] = None
+    withinExpectedArea: Optional[bool] = None
+    permissionStatus: Optional[str] = None
+    source: Optional[str] = None
+    note: Optional[str] = None
+
+
 class VisitContext(BaseModel):
     id: Optional[str] = None
     patientId: Optional[str] = None
     scheduledAt: Optional[str] = None
     arrivedAt: Optional[str] = None
     location: Optional[str] = None
+    plannedAddress: Optional[str] = None
+    plannedCoords: Optional[GeoPoint] = None
+    locationThresholdMeters: Optional[float] = None
+    checkIn: Optional[LocationSnapshot] = None
+    checkOut: Optional[LocationSnapshot] = None
     status: Optional[str] = None
 
 
@@ -302,38 +327,59 @@ async def health():
 async def chat(req: AiChatRequest):
     started_at = time.perf_counter()
     latest_user_query = _latest_user_query(req.messages)
+    initial_route = decide_route(latest_user_query, req.patientContext, req.attachments)
     logger.info(
-        "AI POST /ai/chat received messages=%s attachments=%s patient_context=%s latest_user_preview=%r",
+        "AI POST /ai/chat received messages=%s attachments=%s patient_context=%s route=%s route_confidence=%.2f latest_user_preview=%r",
         len(req.messages),
         len(req.attachments or []),
         bool(req.patientContext),
+        initial_route.mode,
+        initial_route.confidence,
         _preview(latest_user_query),
     )
     logger.debug("AI POST /ai/chat payload=%s",
                  preview_object(req.model_dump(exclude_none=True)))
+
     rag_started_at = time.perf_counter()
     rag_chunks: list[RetrievedChunk] = []
-    if CHAT_RAG_ENABLED and latest_user_query.strip() and rag_retriever.is_configured:
+    should_use_rag = initial_route.uses_rag
+    if should_use_rag and CHAT_RAG_ENABLED and latest_user_query.strip() and rag_retriever.is_configured:
         rag_chunks = await _retrieve_for_chat(latest_user_query)
     else:
         logger.info(
-            "AI POST /ai/chat RAG skipped enabled=%s configured=%s query_present=%s",
+            "AI POST /ai/chat RAG skipped route_uses_rag=%s enabled=%s configured=%s query_present=%s",
+            should_use_rag,
             CHAT_RAG_ENABLED,
             rag_retriever.is_configured,
             bool(latest_user_query.strip()),
         )
     rag_elapsed_ms = (time.perf_counter() - rag_started_at) * 1000
-    rag_context = _build_chat_rag_context(rag_chunks)
+    accepted_rag_chunks = _filter_rag_chunks(rag_chunks)
+    rag_context = _build_chat_rag_context(accepted_rag_chunks)
+
     db_context_started_at = time.perf_counter()
-    db_context_result = await db_context_retriever.retrieve(
-        latest_user_query,
-        patient_context=req.patientContext,
-    )
+    should_use_db = initial_route.uses_db
+    if should_use_db:
+        db_context_result = await db_context_retriever.retrieve(
+            latest_user_query,
+            patient_context=req.patientContext,
+        )
+    else:
+        logger.info("AI POST /ai/chat PostgreSQL context skipped route_uses_db=%s", should_use_db)
+        db_context_result = _empty_db_context_result()
     db_context_elapsed_ms = (time.perf_counter() - db_context_started_at) * 1000
-    combined_context = (
-        db_context_result.context
-        if db_context_result.metadata.get("used_for_chat")
-        else rag_context
+    db_has_quality = _db_context_has_quality(db_context_result.metadata)
+    rag_has_quality = bool(accepted_rag_chunks)
+    effective_route, ambiguity_resolved_by = _resolve_effective_route(
+        initial_route,
+        db_has_quality=db_has_quality,
+        rag_has_quality=rag_has_quality,
+    )
+    combined_context = _context_for_route(
+        effective_route,
+        db_context_result.context if db_has_quality else "",
+        rag_context if rag_has_quality else "",
+        ambiguous_initial=initial_route.mode == "uncertain",
     )
 
     generation_started_at = time.perf_counter()
@@ -349,28 +395,48 @@ async def chat(req: AiChatRequest):
         rag_context=combined_context,
     )
     logger.info(
-        "AI POST /ai/chat completed rag_results=%s rag_elapsed_ms=%.1f db_context_used=%s db_context_elapsed_ms=%.1f generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
+        "AI POST /ai/chat completed initial_route=%s effective_route=%s ambiguity_resolved_by=%s rag_retrieved=%s rag_accepted=%s rag_elapsed_ms=%.1f db_context_used=%s db_context_elapsed_ms=%.1f db_result_counts=%s generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
+        initial_route.mode,
+        effective_route.mode,
+        ambiguity_resolved_by,
         len(rag_chunks),
+        len(accepted_rag_chunks),
         rag_elapsed_ms,
         db_context_result.metadata.get("used_for_chat"),
         db_context_elapsed_ms,
+        db_context_result.metadata.get("result_counts", {}),
         (time.perf_counter() - generation_started_at) * 1000,
         (time.perf_counter() - started_at) * 1000,
         len(reply),
     )
-    rag_payload = _rag_payload(rag_chunks, latest_user_query)
+    rag_payload = _rag_payload(accepted_rag_chunks, latest_user_query)
     rag_payload.update(
         {
             "enabled_for_chat": CHAT_RAG_ENABLED,
-            "used_for_chat": bool(rag_chunks),
+            "used_for_chat": rag_has_quality,
             "top_k": CHAT_RAG_TOP_K,
             "status": rag_retriever.status(),
             "database_context": db_context_result.metadata,
+            "rag_context": {
+                "retrieved_count": len(rag_chunks),
+                "accepted_count": len(accepted_rag_chunks),
+                "min_score": CHAT_RAG_MIN_SCORE,
+            },
+            "route": {
+                "initial_mode": initial_route.mode,
+                "effective_mode": effective_route.mode,
+                "uses_db": effective_route.uses_db,
+                "uses_rag": effective_route.uses_rag,
+                "confidence": initial_route.confidence,
+                "reason": initial_route.reason,
+                "matched_signals": initial_route.matched_signals,
+                "ambiguity_resolved_by": ambiguity_resolved_by,
+            },
         }
     )
     response = AiChatResponse(
         reply=reply,
-        sources=_source_labels(rag_chunks),
+        sources=_source_labels(accepted_rag_chunks),
         rag=rag_payload,
         model=service.status(),
     )
@@ -424,6 +490,130 @@ async def _retrieve_for_chat(query: str) -> list[RetrievedChunk]:
     except Exception as exc:
         logger.warning("AI POST /ai/chat RAG retrieval failed: %s", exc, exc_info=True)
         return []
+
+
+def _filter_rag_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    if CHAT_RAG_MIN_SCORE <= 0:
+        return chunks
+    return [chunk for chunk in chunks if chunk.score >= CHAT_RAG_MIN_SCORE]
+
+
+def _empty_db_context_result() -> DbContextResult:
+    return DbContextResult(
+        context="",
+        metadata={
+            "enabled_for_chat": db_context_retriever.enabled,
+            "used_for_chat": False,
+            "configured": db_context_retriever.configured,
+            "matched_intents": [],
+            "tables": [],
+            "result_counts": {},
+            "status": db_context_retriever.status(),
+        },
+    )
+
+
+def _db_context_has_quality(metadata: dict[str, Any]) -> bool:
+    if not metadata.get("used_for_chat"):
+        return False
+    result_counts = metadata.get("result_counts") or {}
+    if not isinstance(result_counts, dict):
+        return True
+    return any(isinstance(count, int) and count > 0 for count in result_counts.values())
+
+
+def _resolve_effective_route(
+    initial_route: RouteDecision,
+    *,
+    db_has_quality: bool,
+    rag_has_quality: bool,
+) -> tuple[RouteDecision, str]:
+    if initial_route.mode != "uncertain":
+        return initial_route, "not_ambiguous"
+    if db_has_quality and rag_has_quality:
+        return (
+            with_effective_mode(
+                initial_route,
+                "hybrid",
+                "Ambiguous query had reliable database and RAG context.",
+            ),
+            "both_quality",
+        )
+    if db_has_quality:
+        return (
+            with_effective_mode(
+                initial_route,
+                "database_only",
+                "Ambiguous query resolved to database context by retrieval quality.",
+            ),
+            "db_quality",
+        )
+    if rag_has_quality:
+        return (
+            with_effective_mode(
+                initial_route,
+                "rag_only",
+                "Ambiguous query resolved to RAG context by retrieval quality.",
+            ),
+            "rag_quality",
+        )
+    return (
+        with_effective_mode(
+            initial_route,
+            "direct_ai",
+            "Ambiguous query had no reliable database or RAG context.",
+        ),
+        "no_quality",
+    )
+
+
+def _context_for_route(
+    route: RouteDecision,
+    db_context: str,
+    rag_context: str,
+    *,
+    ambiguous_initial: bool,
+) -> str:
+    if route.mode == "database_only":
+        return db_context or _missing_context_instruction("database")
+    if route.mode == "rag_only":
+        return rag_context or _missing_context_instruction("rag")
+    if route.mode == "hybrid":
+        return _combine_contexts(
+            _hybrid_context_instruction(ambiguous_initial),
+            db_context or _missing_context_instruction("database"),
+            rag_context or _missing_context_instruction("rag"),
+        )
+    return ""
+
+
+def _hybrid_context_instruction(ambiguous_initial: bool) -> str:
+    parts = [
+        "## Retrieval Source Boundaries",
+        "PostgreSQL rows are synthetic patient facts.",
+        "RAG evidence is care guideline/pathway evidence.",
+        "Do not infer missing patient facts from RAG evidence.",
+        "Do not cite patient database rows as guideline evidence.",
+    ]
+    if ambiguous_initial:
+        parts.append(
+            "The user's source intent was ambiguous; separate patient data found from guideline evidence found."
+        )
+    return "\n".join(parts)
+
+
+def _missing_context_instruction(source: str) -> str:
+    if source == "database":
+        return (
+            "## Missing PostgreSQL Synthetic Patient Context\n"
+            "No reliable synthetic patient database rows were retrieved for this question. "
+            "Do not invent patient-specific facts. If helpful, provide general clinical or care-work context and clearly state that no matching synthetic patient record was found."
+        )
+    return (
+        "## Missing Clinical Evidence\n"
+        "No reliable project RAG evidence was retrieved for this question. "
+        "Do not cite project sources. If helpful, provide general clinical or care-work context and clearly state that no matching project guideline evidence was found."
+    )
 
 
 def _build_chat_rag_context(chunks: list[RetrievedChunk]) -> str:
