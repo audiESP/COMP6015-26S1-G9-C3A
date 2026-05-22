@@ -1,0 +1,193 @@
+import os
+import sys
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+
+AI_DIR = Path(__file__).resolve().parents[1]
+if str(AI_DIR) not in sys.path:
+    sys.path.insert(0, str(AI_DIR))
+
+os.environ.setdefault("C3A_AI_ENABLED", "false")
+
+import main  # noqa: E402
+from db_context import DbContextResult  # noqa: E402
+from rag.citations import RetrievedChunk  # noqa: E402
+
+
+class FakeService:
+    def __init__(self):
+        self.last_rag_context = None
+
+    def status(self):
+        return {"model": "fake", "loaded": True}
+
+    async def generate_reply(self, **kwargs):
+        self.last_rag_context = kwargs.get("rag_context")
+        return self.last_rag_context or "direct reply"
+
+
+class FakeDbRetriever:
+    enabled = True
+    configured = True
+
+    def __init__(self):
+        self.calls = 0
+
+    def status(self):
+        return {"status": "fake"}
+
+    async def retrieve(self, query, patient_context=None):
+        self.calls += 1
+        return DbContextResult(
+            context=(
+                "## Retrieved PostgreSQL Synthetic Patient Context\n"
+                "### Medications\n"
+                "[Medication 1] Patient: Jane Smith; Medication: Metformin."
+            ),
+            metadata={
+                "enabled_for_chat": True,
+                "used_for_chat": True,
+                "configured": True,
+                "matched_intents": ["patients", "medications"],
+                "tables": ["c3a_synthea_medications"],
+                "result_counts": {"patients": 1, "medications": 1},
+                "status": {"status": "fake"},
+            },
+        )
+
+
+class FakeRagRetriever:
+    is_configured = True
+
+    def __init__(self, score=0.9):
+        self.calls = 0
+        self.settings = SimpleNamespace(top_k=main.CHAT_RAG_TOP_K)
+        self.score = score
+
+    def status(self):
+        return {"status": "fake"}
+
+    async def retrieve(self, query):
+        self.calls += 1
+        return [
+            RetrievedChunk(
+                text="Care workers should monitor side effects and escalate red flags.",
+                score=self.score,
+                source_title="Care Guide",
+                source_filename="care-guide.pdf",
+                page_start=1,
+                page_end=1,
+                section_heading="Medication monitoring",
+                doc_type="guide",
+            )
+        ]
+
+
+def _chat_payload(message, patient=True):
+    payload = {"messages": [{"role": "user", "content": message}]}
+    if patient:
+        payload["patientContext"] = {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "name": "Jane Smith",
+        }
+    return payload
+
+
+class ChatOrchestrationTest(unittest.TestCase):
+    def setUp(self):
+        self.service = FakeService()
+        self.db = FakeDbRetriever()
+        self.rag = FakeRagRetriever()
+        self.patches = [
+            patch.object(main, "service", self.service),
+            patch.object(main, "db_context_retriever", self.db),
+            patch.object(main, "rag_retriever", self.rag),
+            patch.object(main, "CHAT_RAG_ENABLED", True),
+            patch.object(main, "CHAT_RAG_MIN_SCORE", 0.0),
+        ]
+        for item in self.patches:
+            item.start()
+        self.client = TestClient(main.app)
+
+    def tearDown(self):
+        for item in reversed(self.patches):
+            item.stop()
+
+    def test_database_only_does_not_call_rag(self):
+        response = self.client.post(
+            "/ai/chat",
+            json=_chat_payload("What medications does this patient take?"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.db.calls, 1)
+        self.assertEqual(self.rag.calls, 0)
+        self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "database_only")
+
+    def test_rag_only_does_not_call_db(self):
+        response = self.client.post(
+            "/ai/chat",
+            json=_chat_payload(
+                "What are safe medication management steps for an older adult at home?",
+                patient=False,
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.db.calls, 0)
+        self.assertEqual(self.rag.calls, 1)
+        self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "rag_only")
+
+    def test_hybrid_combines_db_and_rag_context(self):
+        response = self.client.post(
+            "/ai/chat",
+            json=_chat_payload(
+                "Given this patient's medications, what should the care worker monitor today?"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.db.calls, 1)
+        self.assertEqual(self.rag.calls, 1)
+        self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "hybrid")
+        self.assertIn("## Retrieval Source Boundaries", self.service.last_rag_context)
+        self.assertIn("## Retrieved PostgreSQL Synthetic Patient Context", self.service.last_rag_context)
+        self.assertIn("## Retrieved Clinical Evidence", self.service.last_rag_context)
+
+    def test_uncertain_resolves_to_hybrid_when_both_sources_have_quality(self):
+        response = self.client.post(
+            "/ai/chat",
+            json=_chat_payload("Show fall risk for residents", patient=False),
+        )
+
+        body = response.json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.db.calls, 1)
+        self.assertEqual(self.rag.calls, 1)
+        self.assertEqual(body["rag"]["route"]["initial_mode"], "uncertain")
+        self.assertEqual(body["rag"]["route"]["effective_mode"], "hybrid")
+        self.assertEqual(body["rag"]["route"]["ambiguity_resolved_by"], "both_quality")
+
+    def test_low_score_rag_chunk_is_filtered(self):
+        self.rag.score = 0.2
+        with patch.object(main, "CHAT_RAG_MIN_SCORE", 0.5):
+            response = self.client.post(
+                "/ai/chat",
+                json=_chat_payload("What red flags should a care worker escalate?", patient=False),
+            )
+
+        body = response.json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["rag"]["rag_context"]["retrieved_count"], 1)
+        self.assertEqual(body["rag"]["rag_context"]["accepted_count"], 0)
+        self.assertEqual(body["sources"], [])
+        self.assertNotIn("## Retrieved Clinical Evidence", self.service.last_rag_context)
+
+
+if __name__ == "__main__":
+    unittest.main()

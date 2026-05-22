@@ -20,6 +20,167 @@ class PatientContext(BaseModel):
     medicalRecordNumber: Optional[str] = None
     diagnosis: Optional[str] = None
     notes: Optional[str] = None
+    preferredLanguage: Optional[str] = None
+    interpreterRequired: Optional[bool] = None
+    culturalBackground: Optional[str] = None
+    mobilitySupport: Optional[str] = None
+    cognitiveStatus: Optional[str] = None
+    dietaryNotes: Optional[str] = None
+    communicationNotes: Optional[str] = None
+    careRiskFlags: Optional[list[str]] = None
+    allergies: Optional[list[str]] = None
+    medications: Optional[list[str]] = None
+
+
+class WorkerContext(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    role: Optional[str] = None
+    shift: Optional[str] = None
+
+
+class GeoPoint(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class LocationSnapshot(BaseModel):
+    id: Optional[str] = None
+    type: Optional[str] = None
+    timestamp: Optional[str] = None
+    coords: Optional[GeoPoint] = None
+    accuracyMeters: Optional[float] = None
+    distanceFromPlannedMeters: Optional[float] = None
+    withinExpectedArea: Optional[bool] = None
+    permissionStatus: Optional[str] = None
+    source: Optional[str] = None
+    note: Optional[str] = None
+
+
+class VisitContext(BaseModel):
+    id: Optional[str] = None
+    patientId: Optional[str] = None
+    scheduledAt: Optional[str] = None
+    arrivedAt: Optional[str] = None
+    location: Optional[str] = None
+    plannedAddress: Optional[str] = None
+    plannedCoords: Optional[GeoPoint] = None
+    locationThresholdMeters: Optional[float] = None
+    checkIn: Optional[LocationSnapshot] = None
+    checkOut: Optional[LocationSnapshot] = None
+    status: Optional[str] = None
+
+
+class CareTaskContext(BaseModel):
+    id: Optional[str] = None
+    label: Optional[str] = None
+    type: Optional[str] = None
+    status: Optional[str] = None
+    dueAt: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class ScenarioEventContext(BaseModel):
+    id: Optional[str] = None
+    type: Optional[str] = None
+    timestamp: Optional[str] = None
+    note: Optional[str] = None
+
+
+class RiskContext(BaseModel):
+    id: Optional[str] = None
+    level: Optional[str] = None
+    title: Optional[str] = None
+    message: Optional[str] = None
+    source: Optional[str] = None
+
+
+class IncidentChecklistItem(BaseModel):
+    id: str
+    label: str
+    completed: bool
+
+
+class VisitQueueItem(BaseModel):
+    id: str
+    scheduledAt: str
+    patientName: str
+    patientMeta: str
+    purpose: str
+    status: str
+
+
+class VisitQueueResponse(BaseModel):
+    visits: list[VisitQueueItem]
+
+
+class ScenarioResponse(BaseModel):
+    worker: WorkerContext
+    patient: PatientContext
+    visit: VisitContext
+    lifecycleStep: str
+    tasks: list[CareTaskContext]
+    events: list[ScenarioEventContext]
+    alerts: list[RiskContext]
+    incidentChecklist: list[IncidentChecklistItem]
+
+
+class UpdatePatientProfileRequest(BaseModel):
+    name: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    medicalRecordNumber: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+    preferredLanguage: Optional[str] = None
+    interpreterRequired: Optional[bool] = None
+    culturalBackground: Optional[str] = None
+    mobilitySupport: Optional[str] = None
+    cognitiveStatus: Optional[str] = None
+    dietaryNotes: Optional[str] = None
+    communicationNotes: Optional[str] = None
+    careRiskFlags: Optional[list[str]] = None
+    allergies: Optional[list[str]] = None
+    medications: Optional[list[str]] = None
+
+
+class LocationSnapshotRequest(BaseModel):
+    id: Optional[str] = None
+    type: str
+    timestamp: str
+    coords: Optional[GeoPoint] = None
+    accuracyMeters: Optional[float] = None
+    distanceFromPlannedMeters: Optional[float] = None
+    withinExpectedArea: Optional[bool] = None
+    permissionStatus: str
+    source: str
+    note: Optional[str] = None
+
+
+class StartVisitRequest(BaseModel):
+    workerId: Optional[str] = None
+    checkIn: Optional[LocationSnapshotRequest] = None
+
+
+class CompleteVisitRequest(BaseModel):
+    workerId: Optional[str] = None
+    checkOut: Optional[LocationSnapshotRequest] = None
+
+
+class TaskStatusRequest(BaseModel):
+    status: str
+    workerId: Optional[str] = None
+
+
+class TaskIssueRequest(BaseModel):
+    type: str
+    workerId: Optional[str] = None
+
+
+class ShiftSummaryResponse(BaseModel):
+    total: int
+    completed: int
+    followUps: int
 
 
 class AttachmentData(BaseModel):
@@ -31,6 +192,11 @@ class AttachmentData(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     patientContext: Optional[PatientContext] = None
+    workerContext: Optional[WorkerContext] = None
+    visitContext: Optional[VisitContext] = None
+    taskContext: Optional[list[CareTaskContext]] = None
+    eventContext: Optional[list[ScenarioEventContext]] = None
+    riskContext: Optional[list[RiskContext]] = None
     attachments: Optional[list[AttachmentData]] = None
 
 

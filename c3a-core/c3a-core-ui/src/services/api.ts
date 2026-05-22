@@ -1,6 +1,14 @@
 // src/services/api.ts
 import { NativeModules, Platform } from 'react-native';
-import { ApiChatRequest, ApiChatResponse } from '../types';
+import {
+  ApiChatRequest,
+  ApiChatResponse,
+  CareTaskStatus,
+  LocationSnapshot,
+  PatientInfo,
+  ScenarioContext,
+  VisitQueueItem,
+} from '../types';
 
 const DEFAULT_API_PORT = '8000';
 
@@ -104,6 +112,29 @@ async function fetchWithTimeout(
   }
 }
 
+async function requestJson<T>(
+  path: string,
+  options: RequestInit = {},
+  timeoutMs = 60000,
+): Promise<T> {
+  const res = await fetchWithTimeout(`${getApiBaseUrl()}${path}`, {
+    ...options,
+    headers: {
+      'bypass-tunnel-reminder': 'true',
+      'ngrok-skip-browser-warning': 'true',
+      'Content-Type': 'application/json',
+      ...(options.headers ?? {}),
+    },
+  }, timeoutMs);
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new MedGemmaApiError(res.status, text || 'API error');
+  }
+
+  return res.json();
+}
+
 /**
  * Send a chat message to the MedGemma backend.
  */
@@ -131,6 +162,85 @@ export async function sendChatMessage(
   }
 
   return res.json();
+}
+
+export async function fetchVisitQueue(
+  workerId: string,
+  date: string,
+): Promise<{ visits: VisitQueueItem[] }> {
+  return requestJson(`/workers/${encodeURIComponent(workerId)}/visits?date=${encodeURIComponent(date)}`, {
+    method: 'GET',
+  });
+}
+
+export async function fetchVisitScenario(visitId: string): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}`, {
+    method: 'GET',
+  });
+}
+
+export async function updatePatientProfile(patient: PatientInfo): Promise<ScenarioContext> {
+  return requestJson(`/patients/${encodeURIComponent(patient.id)}/profile`, {
+    method: 'PATCH',
+    body: JSON.stringify(patient),
+  });
+}
+
+export async function startVisit(
+  visitId: string,
+  workerId: string,
+  checkIn?: LocationSnapshot,
+): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/start`, {
+    method: 'POST',
+    body: JSON.stringify({ workerId, checkIn }),
+  });
+}
+
+export async function completeTask(
+  visitId: string,
+  taskId: string,
+  workerId: string,
+): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}/complete`, {
+    method: 'POST',
+    body: JSON.stringify({ workerId, status: 'completed' }),
+  });
+}
+
+export async function updateTaskStatus(
+  visitId: string,
+  taskId: string,
+  status: CareTaskStatus,
+  workerId: string,
+): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, workerId }),
+  });
+}
+
+export async function reportTaskIssue(
+  visitId: string,
+  taskId: string,
+  type: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+  workerId: string,
+): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}/issue`, {
+    method: 'POST',
+    body: JSON.stringify({ type, workerId }),
+  });
+}
+
+export async function finishVisit(
+  visitId: string,
+  workerId: string,
+  checkOut?: LocationSnapshot,
+): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/complete`, {
+    method: 'POST',
+    body: JSON.stringify({ workerId, checkOut }),
+  });
 }
 
 /**

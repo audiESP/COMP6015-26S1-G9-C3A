@@ -41,6 +41,13 @@ When retrieved clinical evidence or PostgreSQL patient context is provided,
 use it as the primary source for your answer and do not ignore it.
 For care-worker questions, answer with practical aged-care actions and
 escalation/red-flag advice where appropriate.
+When visit workflow context is provided, tailor the answer to the current
+visit status, task list, recent events, active risks, patient mobility, CALD
+needs, and the health worker's role. Explain what the care worker should do
+next in the real workflow, not only generic clinical facts.
+Treat location data as visit workflow context only. If a location check is
+outside the expected area, advise address confirmation and documentation; do
+not accuse the worker or make surveillance conclusions.
 Always remind the user that AI advice does not replace professional clinical judgment.
 Be concise, accurate, and compassionate."""
 
@@ -61,6 +68,107 @@ def _build_patient_context(patient) -> str:
         parts.append(f"- Diagnosis: {patient.diagnosis}")
     if patient.notes:
         parts.append(f"- Notes: {patient.notes}")
+    if getattr(patient, "preferredLanguage", None):
+        parts.append(f"- Preferred language: {patient.preferredLanguage}")
+    if getattr(patient, "interpreterRequired", None) is not None:
+        parts.append(f"- Interpreter required: {patient.interpreterRequired}")
+    if getattr(patient, "culturalBackground", None):
+        parts.append(f"- Cultural background: {patient.culturalBackground}")
+    if getattr(patient, "mobilitySupport", None):
+        parts.append(f"- Mobility support: {patient.mobilitySupport}")
+    if getattr(patient, "cognitiveStatus", None):
+        parts.append(f"- Cognitive status: {patient.cognitiveStatus}")
+    if getattr(patient, "dietaryNotes", None):
+        parts.append(f"- Dietary notes: {patient.dietaryNotes}")
+    if getattr(patient, "communicationNotes", None):
+        parts.append(f"- Communication notes: {patient.communicationNotes}")
+    if getattr(patient, "careRiskFlags", None):
+        parts.append(f"- Care risk flags: {', '.join(patient.careRiskFlags)}")
+    if getattr(patient, "allergies", None):
+        parts.append(f"- Allergies: {', '.join(patient.allergies)}")
+    if getattr(patient, "medications", None):
+        parts.append(f"- Medications: {', '.join(patient.medications)}")
+    return "\n".join(parts)
+
+
+def _build_workflow_context(worker=None, visit=None, tasks=None, events=None, risks=None) -> str:
+    parts: list[str] = []
+    if worker:
+        parts.append("## Current Health Worker")
+        if getattr(worker, "name", None):
+            parts.append(f"- Name: {worker.name}")
+        if getattr(worker, "role", None):
+            parts.append(f"- Role: {worker.role}")
+        if getattr(worker, "shift", None):
+            parts.append(f"- Shift: {worker.shift}")
+    if visit:
+        parts.append("## Current Visit")
+        for label, attr in [
+            ("Visit ID", "id"),
+            ("Scheduled at", "scheduledAt"),
+            ("Arrived at", "arrivedAt"),
+            ("Location/purpose", "location"),
+            ("Status", "status"),
+        ]:
+            value = getattr(visit, attr, None)
+            if value:
+                parts.append(f"- {label}: {value}")
+        if getattr(visit, "plannedAddress", None):
+            parts.append(f"- Planned address: {visit.plannedAddress}")
+        threshold = getattr(visit, "locationThresholdMeters", None)
+        if threshold:
+            parts.append(f"- Location threshold: {threshold} metres")
+        for label, attr in [("Check-in", "checkIn"), ("Check-out", "checkOut")]:
+            snapshot = getattr(visit, attr, None)
+            if snapshot:
+                line = f"- {label}: {getattr(snapshot, 'source', 'unknown')} at {getattr(snapshot, 'timestamp', 'unknown time')}"
+                distance = getattr(snapshot, "distanceFromPlannedMeters", None)
+                if distance is not None:
+                    line += f"; {round(distance)} metres from planned location"
+                accuracy = getattr(snapshot, "accuracyMeters", None)
+                if accuracy is not None:
+                    line += f"; GPS accuracy {round(accuracy)} metres"
+                within = getattr(snapshot, "withinExpectedArea", None)
+                if within is not None:
+                    line += f"; within expected area: {within}"
+                note = getattr(snapshot, "note", None)
+                if note:
+                    line += f"; note: {note}"
+                parts.append(line)
+    if tasks:
+        parts.append("## Current Care Tasks")
+        for task in tasks[:12]:
+            label = getattr(task, "label", None) or getattr(task, "id", "Task")
+            status = getattr(task, "status", "unknown")
+            due_at = getattr(task, "dueAt", None)
+            detail = getattr(task, "detail", None)
+            line = f"- {label}: {status}"
+            if due_at:
+                line += f" (due {due_at})"
+            if detail:
+                line += f"; {detail}"
+            parts.append(line)
+    if events:
+        parts.append("## Recent Real-World Events")
+        for event in events[:8]:
+            event_type = getattr(event, "type", "event")
+            event_time = getattr(event, "timestamp", "")
+            note = getattr(event, "note", None)
+            line = f"- {event_type}"
+            if event_time:
+                line += f" at {event_time}"
+            if note:
+                line += f": {note}"
+            parts.append(line)
+    if risks:
+        parts.append("## Active Risk Alerts")
+        for risk in risks[:8]:
+            title = getattr(risk, "title", None) or getattr(risk, "id", "Risk")
+            level = getattr(risk, "level", "unknown")
+            message = getattr(risk, "message", "")
+            parts.append(f"- {level.upper()}: {title}. {message}")
+    if not parts:
+        return ""
     return "\n".join(parts)
 
 
@@ -135,6 +243,11 @@ class MedGemmaService:
         self,
         messages: list[tuple[str, str]],
         patient=None,
+        worker=None,
+        visit=None,
+        tasks=None,
+        events=None,
+        risks=None,
         attachments=None,
         rag_context=None,
     ) -> str:
@@ -145,7 +258,17 @@ class MedGemmaService:
             return self._demo_reply(messages, rag_context)
 
         if self.provider == "remote":
-            return await self._remote_generate(messages, patient, attachments or [], rag_context)
+            return await self._remote_generate(
+                messages,
+                patient,
+                attachments or [],
+                rag_context,
+                worker=worker,
+                visit=visit,
+                tasks=tasks or [],
+                events=events or [],
+                risks=risks or [],
+            )
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
@@ -153,15 +276,34 @@ class MedGemmaService:
             self._sync_generate,
             messages,
             patient,
+            worker,
+            visit,
+            tasks or [],
+            events or [],
+            risks or [],
             attachments or [],
             rag_context,
         )
 
-    def _sync_generate(self, messages, patient, attachments, rag_context=None) -> str:
+    def _sync_generate(
+        self,
+        messages,
+        patient,
+        worker,
+        visit,
+        tasks,
+        events,
+        risks,
+        attachments,
+        rag_context=None,
+    ) -> str:
         system_parts = [SYSTEM_PROMPT]
         patient_ctx = _build_patient_context(patient)
         if patient_ctx:
             system_parts.append(patient_ctx)
+        workflow_ctx = _build_workflow_context(worker, visit, tasks, events, risks)
+        if workflow_ctx:
+            system_parts.append(workflow_ctx)
         rag_ctx = _build_rag_context(rag_context)
         if rag_ctx:
             system_parts.append(rag_ctx)
@@ -198,12 +340,37 @@ class MedGemmaService:
             return generated[-1].get("content", "").strip()
         return str(generated).strip()
 
-    async def _remote_generate(self, messages, patient, attachments, rag_context=None) -> str:
-        remote_messages = _build_remote_messages(messages, patient, rag_context)
+    async def _remote_generate(
+        self,
+        messages,
+        patient,
+        attachments,
+        rag_context=None,
+        worker=None,
+        visit=None,
+        tasks=None,
+        events=None,
+        risks=None,
+    ) -> str:
+        remote_messages = _build_remote_messages(
+            messages,
+            patient,
+            rag_context,
+            worker=worker,
+            visit=visit,
+            tasks=tasks or [],
+            events=events or [],
+            risks=risks or [],
+        )
         rag_ctx = _build_rag_context(rag_context)
         payload = {
             "messages": remote_messages,
             "patientContext": _serialise_model(patient),
+            "workerContext": _serialise_model(worker),
+            "visitContext": _serialise_model(visit),
+            "taskContext": [_serialise_model(item) for item in tasks or []],
+            "eventContext": [_serialise_model(item) for item in events or []],
+            "riskContext": [_serialise_model(item) for item in risks or []],
             "attachments": [_serialise_model(item) for item in attachments],
             "ragContext": rag_ctx,
             "context": rag_ctx,
@@ -316,11 +483,23 @@ def _normalise_remote_url(raw: str) -> str:
     return f"{url}/generate"
 
 
-def _build_remote_messages(messages, patient, rag_context=None) -> list[dict[str, str]]:
+def _build_remote_messages(
+    messages,
+    patient,
+    rag_context=None,
+    worker=None,
+    visit=None,
+    tasks=None,
+    events=None,
+    risks=None,
+) -> list[dict[str, str]]:
     system_parts = [SYSTEM_PROMPT]
     patient_ctx = _build_patient_context(patient)
     if patient_ctx:
         system_parts.append(patient_ctx)
+    workflow_ctx = _build_workflow_context(worker, visit, tasks or [], events or [], risks or [])
+    if workflow_ctx:
+        system_parts.append(workflow_ctx)
     rag_ctx = _build_rag_context(rag_context)
     if rag_ctx:
         system_parts.append(rag_ctx)

@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import date
 
 import uvicorn
 from dotenv import load_dotenv
@@ -18,9 +19,27 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.ai_client import AiClient, AiServiceUnavailable
-from app.db import DatabaseHealthChecker
+from app.db import DatabaseHealthChecker, close_database_pool, open_database_pool
 from app.logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
-from app.schemas import ChatRequest, ChatResponse, UploadRequest, UploadResponse
+from app.repositories.visit_repository import (
+    VisitNotFoundError,
+    VisitRepository,
+    VisitRepositoryUnavailable,
+)
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    CompleteVisitRequest,
+    ScenarioResponse,
+    ShiftSummaryResponse,
+    StartVisitRequest,
+    TaskIssueRequest,
+    TaskStatusRequest,
+    UpdatePatientProfileRequest,
+    UploadRequest,
+    UploadResponse,
+    VisitQueueResponse,
+)
 
 
 load_dotenv()
@@ -32,6 +51,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="C3A Core API", version="1.0.0")
 ai_client = AiClient()
 database_health_checker = DatabaseHealthChecker()
+visit_repository = VisitRepository()
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,8 +97,18 @@ def _uses_database_context(ai_response) -> bool:
     return bool(database_context.get("used_for_chat"))
 
 
+def _visit_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, VisitRepositoryUnavailable):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, VisitNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    logger.exception("Visit repository operation failed")
+    return HTTPException(status_code=500, detail="Visit workflow database operation failed")
+
+
 @app.on_event("startup")
 async def startup_log_summary():
+    open_database_pool()
     logger.info(
         "C3A Core API startup port=%s debug_backend=%s ai_base_url=%s ai_timeout_seconds=%s database_configured=%s",
         os.getenv("C3A_API_PORT", "8000"),
@@ -89,6 +119,11 @@ async def startup_log_summary():
     )
 
 
+@app.on_event("shutdown")
+async def shutdown_database_pool():
+    close_database_pool()
+
+
 @app.get("/health")
 async def health():
     return {
@@ -97,6 +132,95 @@ async def health():
         "ai": await ai_client.health(),
         "database": await database_health_checker.health(),
     }
+
+
+@app.get("/workers/{worker_id}/visits", response_model=VisitQueueResponse)
+def list_worker_visits(worker_id: str, date: date):
+    try:
+        return VisitQueueResponse(visits=visit_repository.list_visit_queue(worker_id, date))
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.get("/workers/{worker_id}/shift-summary", response_model=ShiftSummaryResponse)
+def worker_shift_summary(worker_id: str, date: date):
+    try:
+        return ShiftSummaryResponse(**visit_repository.shift_summary(worker_id, date))
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.get("/visits/{visit_id}", response_model=ScenarioResponse)
+def get_visit(visit_id: str):
+    try:
+        return ScenarioResponse.model_validate(visit_repository.get_scenario(visit_id))
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.patch("/patients/{patient_id}/profile", response_model=ScenarioResponse)
+def update_patient_profile(patient_id: str, req: UpdatePatientProfileRequest):
+    try:
+        payload = req.model_dump(exclude_unset=True)
+        if req.name is not None:
+            payload["displayName"] = req.name
+        return ScenarioResponse.model_validate(
+            visit_repository.update_patient_profile(patient_id, payload)
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.post("/visits/{visit_id}/start", response_model=ScenarioResponse)
+def start_visit(visit_id: str, req: StartVisitRequest):
+    try:
+        snapshot = req.checkIn.model_dump(exclude_none=True) if req.checkIn else None
+        return ScenarioResponse.model_validate(
+            visit_repository.start_visit(visit_id, req.workerId, snapshot)
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.post("/visits/{visit_id}/tasks/{task_id}/complete", response_model=ScenarioResponse)
+def complete_task(visit_id: str, task_id: str, req: TaskStatusRequest | None = None):
+    try:
+        return ScenarioResponse.model_validate(
+            visit_repository.complete_task(visit_id, task_id, req.workerId if req else None)
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.patch("/visits/{visit_id}/tasks/{task_id}", response_model=ScenarioResponse)
+def update_task(visit_id: str, task_id: str, req: TaskStatusRequest):
+    try:
+        return ScenarioResponse.model_validate(
+            visit_repository.update_task_status(visit_id, task_id, req.status, req.workerId)
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.post("/visits/{visit_id}/tasks/{task_id}/issue", response_model=ScenarioResponse)
+def report_task_issue(visit_id: str, task_id: str, req: TaskIssueRequest):
+    try:
+        return ScenarioResponse.model_validate(
+            visit_repository.report_task_issue(visit_id, task_id, req.type, req.workerId)
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.post("/visits/{visit_id}/complete", response_model=ScenarioResponse)
+def complete_visit(visit_id: str, req: CompleteVisitRequest):
+    try:
+        snapshot = req.checkOut.model_dump(exclude_none=True) if req.checkOut else None
+        return ScenarioResponse.model_validate(
+            visit_repository.complete_visit(visit_id, req.workerId, snapshot)
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
 
 
 @app.post("/chat", response_model=ChatResponse)

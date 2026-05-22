@@ -25,6 +25,16 @@ export interface PatientInfo {
   medicalRecordNumber?: string;
   diagnosis?: string;
   notes?: string;
+  preferredLanguage?: string;
+  interpreterRequired?: boolean;
+  culturalBackground?: string;
+  mobilitySupport?: string;
+  cognitiveStatus?: string;
+  dietaryNotes?: string;
+  communicationNotes?: string;
+  careRiskFlags?: string[];
+  allergies?: string[];
+  medications?: string[];
 }
 
 export interface ChatSession {
@@ -36,9 +46,154 @@ export interface ChatSession {
   patientInfo?: PatientInfo;
 }
 
+export type VisitStatus =
+  | 'scheduled'
+  | 'arrived'
+  | 'in_progress'
+  | 'delayed'
+  | 'incident'
+  | 'follow_up_required'
+  | 'review_required'
+  | 'completed';
+
+export type VisitLifecycleStep =
+  | 'pre_visit'
+  | 'arrival'
+  | 'care_tasks'
+  | 'incident_active'
+  | 'review'
+  | 'closed';
+
+export type CareTaskStatus = 'pending' | 'completed' | 'delayed' | 'skipped' | 'issue';
+
+export type LocationPermissionStatus =
+  | 'unknown'
+  | 'granted'
+  | 'denied'
+  | 'unavailable';
+
+export interface GeoPoint {
+  latitude: number;
+  longitude: number;
+}
+
+export interface LocationSnapshot {
+  id: string;
+  type: 'check_in' | 'check_out';
+  timestamp: string;
+  coords?: GeoPoint;
+  accuracyMeters?: number;
+  distanceFromPlannedMeters?: number;
+  withinExpectedArea?: boolean;
+  permissionStatus: LocationPermissionStatus;
+  source: 'gps' | 'manual_override';
+  note?: string;
+}
+
+export type CareTaskType =
+  | 'arrival'
+  | 'meal'
+  | 'medication'
+  | 'wellbeing'
+  | 'mobility'
+  | 'documentation'
+  | 'follow_up';
+
+export interface WorkerContext {
+  id: string;
+  name: string;
+  role: 'care_worker' | 'nurse' | 'supervisor';
+  shift: string;
+}
+
+export interface VisitContext {
+  id: string;
+  patientId: string;
+  scheduledAt: string;
+  arrivedAt?: string;
+  location: string;
+  plannedAddress?: string;
+  plannedCoords?: GeoPoint;
+  locationThresholdMeters?: number;
+  checkIn?: LocationSnapshot;
+  checkOut?: LocationSnapshot;
+  status: VisitStatus;
+}
+
+export interface CareTask {
+  id: string;
+  label: string;
+  type: CareTaskType;
+  status: CareTaskStatus;
+  dueAt?: string;
+  detail?: string;
+}
+
+export interface ScenarioEvent {
+  id: string;
+  type:
+    | 'arrived'
+    | 'care_started'
+    | 'running_late'
+    | 'medication_given'
+    | 'medication_delayed'
+    | 'location_check_in'
+    | 'location_check_out'
+    | 'location_permission_denied'
+    | 'location_out_of_range'
+    | 'patient_unsteady'
+    | 'fall_found'
+    | 'escalation_triggered'
+    | 'follow_up_required'
+    | 'review_started'
+    | 'incident_check_completed'
+    | 'visit_completed';
+  timestamp: string;
+  note?: string;
+}
+
+export interface RiskAlert {
+  id: string;
+  level: 'low' | 'moderate' | 'high';
+  title: string;
+  message: string;
+  source?: 'rules' | 'rag' | 'ai';
+}
+
+export interface ScenarioContext {
+  worker: WorkerContext;
+  patient: PatientInfo;
+  visit: VisitContext;
+  lifecycleStep: VisitLifecycleStep;
+  tasks: CareTask[];
+  events: ScenarioEvent[];
+  alerts: RiskAlert[];
+  incidentChecklist: IncidentChecklistItem[];
+}
+
+export interface IncidentChecklistItem {
+  id: string;
+  label: string;
+  completed: boolean;
+}
+
+export interface VisitQueueItem {
+  id: string;
+  scheduledAt: string;
+  patientName: string;
+  patientMeta: string;
+  purpose: string;
+  status: VisitStatus;
+}
+
 export interface ApiChatRequest {
   messages: { role: string; content: string }[];
   patientContext?: PatientInfo;
+  workerContext?: WorkerContext;
+  visitContext?: VisitContext;
+  taskContext?: CareTask[];
+  eventContext?: ScenarioEvent[];
+  riskContext?: RiskAlert[];
   attachments?: { type: string; base64: string; mimeType: string }[];
 }
 
