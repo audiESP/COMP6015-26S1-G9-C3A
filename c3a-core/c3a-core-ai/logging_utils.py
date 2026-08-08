@@ -27,7 +27,6 @@ def add_http_logging_middleware(app: FastAPI, logger: logging.Logger, debug_enab
         request.state.started_at = started_at
 
         body_bytes = await request.body()
-        request._receive = _receive_with_cached_body(body_bytes)  # type: ignore[attr-defined]
         body_preview = preview_json_bytes(body_bytes)
         request.state.body_preview = body_preview
         logger.info(
@@ -46,6 +45,27 @@ def add_http_logging_middleware(app: FastAPI, logger: logging.Logger, debug_enab
             )
 
         response = await call_next(request)
+
+        if response.headers.get("content-type", "").startswith("application/x-ndjson"):
+            original_iterator = response.body_iterator
+
+            async def logged_stream():
+                try:
+                    async for chunk in original_iterator:
+                        yield chunk
+                finally:
+                    logger.info(
+                        "HTTP streaming request completed request_id=%s method=%s path=%s status=%s elapsed_ms=%.1f",
+                        request_id,
+                        request.method,
+                        request.url.path,
+                        response.status_code,
+                        (time.perf_counter() - started_at) * 1000,
+                    )
+
+            response.body_iterator = logged_stream()
+            response.headers["x-request-id"] = request_id
+            return response
 
         response_body = await _collect_response_body(response)
         response_preview = preview_json_bytes(response_body)
@@ -163,19 +183,6 @@ def _trim(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}..."
-
-
-def _receive_with_cached_body(body: bytes):
-    done = False
-
-    async def receive():
-        nonlocal done
-        if done:
-            return {"type": "http.request", "body": b"", "more_body": False}
-        done = True
-        return {"type": "http.request", "body": body, "more_body": False}
-
-    return receive
 
 
 async def _collect_response_body(response: Response) -> bytes:

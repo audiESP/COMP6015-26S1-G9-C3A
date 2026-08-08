@@ -66,6 +66,10 @@ class RagRetriever:
             )
             return []
 
+    def close(self) -> None:
+        if self._store is not None:
+            self._store.close()
+
     def status(self) -> dict[str, Any]:
         status = "configured" if self.is_configured else "unavailable"
         if self._last_error:

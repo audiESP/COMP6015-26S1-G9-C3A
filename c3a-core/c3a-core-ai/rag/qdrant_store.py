@@ -7,6 +7,7 @@ import re
 import time
 import uuid
 from dataclasses import asdict
+from functools import cached_property
 from typing import Any
 
 from .citations import RetrievedChunk
@@ -35,7 +36,7 @@ class QdrantKnowledgeStore:
             self.settings.embedding_model
         )
 
-    @property
+    @cached_property
     def client(self):
         try:
             from qdrant_client import QdrantClient
@@ -50,6 +51,12 @@ class QdrantKnowledgeStore:
             api_key=self.settings.qdrant_api_key,
             timeout=60,
         )
+
+    def close(self) -> None:
+        client = self.__dict__.pop("client", None)
+        if client is not None:
+            client.close()
+            logger.info("Qdrant client closed")
 
     def ensure_collection(self) -> None:
         from qdrant_client.models import Distance, VectorParams

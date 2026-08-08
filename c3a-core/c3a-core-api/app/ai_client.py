@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -104,6 +104,46 @@ class AiClient:
         except Exception as exc:
             self.logger.error(
                 "AI client chat failed request_id=%s elapsed_ms=%.1f error=%s",
+                request_id,
+                (time.perf_counter() - started_at) * 1000,
+                exc,
+                exc_info=True,
+            )
+            raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
+
+    async def stream_chat(
+        self,
+        request: ChatRequest,
+        request_id: str | None = None,
+    ) -> AsyncIterator[bytes]:
+        started_at = time.perf_counter()
+        self.logger.info(
+            "AI client streaming chat started base_url=%s request_id=%s timeout=%s latest_user_preview=%r",
+            self.base_url,
+            request_id,
+            self.timeout,
+            _latest_user_preview(request),
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/ai/chat/stream",
+                    json=request.model_dump(exclude_none=True),
+                    headers=_request_headers(request_id),
+                ) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
+            self.logger.info(
+                "AI client streaming chat completed request_id=%s elapsed_ms=%.1f",
+                request_id,
+                (time.perf_counter() - started_at) * 1000,
+            )
+        except Exception as exc:
+            self.logger.error(
+                "AI client streaming chat failed request_id=%s elapsed_ms=%.1f error=%s",
                 request_id,
                 (time.perf_counter() - started_at) * 1000,
                 exc,

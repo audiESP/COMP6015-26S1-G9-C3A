@@ -1,7 +1,7 @@
 {
   "name": "c3a-core-ui",
   "version": "1.0.0",
-  "description": "MedGemma AI Chat — plug-in medical assistant module",
+  "description": "C3A Core clinical context-aware assistant",
   "main": "index.js",
   "scripts": {
     "start": "expo start",

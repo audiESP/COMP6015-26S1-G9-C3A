@@ -6,67 +6,21 @@ import {
   TouchableOpacity,
   Modal,
   StyleSheet,
-  Platform,
-  Alert,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { Attachment } from '../types';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onAttachment: (attachment: Attachment) => void;
   onLinkPatient: () => void;
 }
 
 export const AttachmentMenu: React.FC<Props> = ({
   visible,
   onClose,
-  onAttachment,
   onLinkPatient,
 }) => {
   const { t } = useTranslation();
-
-  const handleUploadFile = async () => {
-    onClose();
-    // In production: use expo-document-picker or react-native-document-picker
-    // Example placeholder:
-    Alert.alert(
-      t('attachment.uploadFile'),
-      'Connect expo-document-picker for real file picking.',
-      [
-        {
-          text: 'Simulate',
-          onPress: () =>
-            onAttachment({
-              id: `${Date.now()}`,
-              type: 'file',
-              name: 'lab_report.pdf',
-              mimeType: 'application/pdf',
-            }),
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
-  };
-
-  const handleTakePhoto = async () => {
-    onClose();
-    // In production: use expo-image-picker
-    Alert.alert(t('attachment.takePhoto'), 'Connect expo-image-picker.', [
-      {
-        text: 'Simulate',
-        onPress: () =>
-          onAttachment({
-            id: `${Date.now()}`,
-            type: 'image',
-            name: 'photo.jpg',
-            mimeType: 'image/jpeg',
-          }),
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
 
   const handleLinkPatient = () => {
     onClose();
@@ -75,16 +29,10 @@ export const AttachmentMenu: React.FC<Props> = ({
 
   const menuItems = [
     {
-      icon: '📁',
-      label: t('attachment.uploadFile'),
-      onPress: handleUploadFile,
-    },
-    {
       icon: '👤',
       label: t('attachment.linkPatient'),
       onPress: handleLinkPatient,
     },
-    { icon: '📷', label: t('attachment.takePhoto'), onPress: handleTakePhoto },
   ];
 
   return (

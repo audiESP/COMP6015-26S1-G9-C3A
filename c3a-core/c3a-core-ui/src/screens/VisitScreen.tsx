@@ -107,6 +107,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     activeSessionId,
     ensureActiveSession,
     addMessage,
+    updateMessage,
     deleteSession,
     linkPatient,
     selectSession,
@@ -116,6 +117,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const { sendMessage, isLoading: chatLoading, error: chatError } = useChat({
     ensureActiveSession,
     addMessage,
+    updateMessage,
     activeSession,
     scenarioContext: scenario,
   });
@@ -153,7 +155,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     if (activeSection === 'assistant' && activeSession?.messages.length) {
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
     }
-  }, [activeSession?.messages.length, activeSection]);
+  }, [activeSession?.messages.length, activeSession?.messages[activeSession.messages.length - 1]?.content, activeSection]);
 
   const handleSend = useCallback(
     (text: string, attachments: Attachment[]) => {
@@ -164,10 +166,6 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     },
     [sendMessage],
   );
-
-  const handleAttachment = useCallback((attachment: Attachment) => {
-    setPendingAttachments((prev) => [...prev, attachment]);
-  }, []);
 
   const handlePatientSave = useCallback(
     (patient: PatientInfo) => {
@@ -413,7 +411,6 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
       <AttachmentMenu
         visible={attachMenuOpen}
         onClose={() => setAttachMenuOpen(false)}
-        onAttachment={handleAttachment}
         onLinkPatient={() => setPatientModalOpen(true)}
       />
 

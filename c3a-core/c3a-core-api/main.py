@@ -7,6 +7,7 @@ requests to c3a-core-ai over HTTP and keeps the existing UI-facing contract.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import time
@@ -17,6 +18,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from app.ai_client import AiClient, AiServiceUnavailable
 from app.db import DatabaseHealthChecker, close_database_pool, open_database_pool
@@ -253,6 +255,27 @@ async def chat(req: ChatRequest, request: Request):
         return ChatResponse(reply=_reply_with_sources(ai_response.reply, ai_response.sources))
     except AiServiceUnavailable as exc:
         raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest, request: Request):
+    request_id = getattr(request.state, "request_id", None)
+
+    async def forward_stream():
+        try:
+            async for chunk in ai_client.stream_chat(req, request_id=request_id):
+                yield chunk
+        except AiServiceUnavailable:
+            yield (json.dumps({"type": "error", "message": "AI service is unavailable"}) + "\n").encode()
+
+    return StreamingResponse(
+        forward_stream(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/upload", response_model=UploadResponse)

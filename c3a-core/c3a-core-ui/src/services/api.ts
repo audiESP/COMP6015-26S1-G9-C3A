@@ -26,9 +26,7 @@ function normalizeBaseUrl(url?: string | null): string | null {
 
 function getEnvBaseUrl(): string | null {
   const env = (globalThis as ProcessWithEnv).process?.env;
-  return normalizeBaseUrl(
-    env?.EXPO_PUBLIC_API_BASE_URL ?? env?.EXPO_PUBLIC_MEDGEMMA_API_URL,
-  );
+  return normalizeBaseUrl(env?.EXPO_PUBLIC_API_BASE_URL);
 }
 
 function getBrowserBaseUrl(): string | null {
@@ -87,15 +85,20 @@ export function getApiBaseUrl(): string {
   return runtimeBaseUrl;
 }
 
-export class MedGemmaApiError extends Error {
+export class ApiError extends Error {
   constructor(
     public statusCode: number,
     message: string,
   ) {
     super(message);
-    this.name = 'MedGemmaApiError';
+    this.name = 'ApiError';
   }
 }
+
+export type ChatStreamEvent =
+  | { type: 'token'; content: string }
+  | { type: 'done'; sources?: string[]; appendSources?: boolean }
+  | { type: 'error'; message: string };
 
 async function fetchWithTimeout(
   url: string,
@@ -129,14 +132,14 @@ async function requestJson<T>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new MedGemmaApiError(res.status, text || 'API error');
+    throw new ApiError(res.status, text || 'API error');
   }
 
   return res.json();
 }
 
 /**
- * Send a chat message to the MedGemma backend.
+ * Send a chat message to the C3A Core backend.
  */
 export async function sendChatMessage(
   request: ApiChatRequest,
@@ -149,7 +152,7 @@ export async function sendChatMessage(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(request),
-  });
+  }, 300000);
 
   if (!res.ok) {
     const text = await res.text();
@@ -158,10 +161,75 @@ export async function sendChatMessage(
     const message = isTunnelError
       ? 'Backend tunnel is unavailable. Start the local backend on port 8000 or set EXPO_PUBLIC_API_BASE_URL / apiBaseUrl to a reachable server.'
       : text || 'API error';
-    throw new MedGemmaApiError(res.status, message);
+    throw new ApiError(res.status, message);
   }
 
   return res.json();
+}
+
+export function streamChatMessage(
+  request: ApiChatRequest,
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let consumedChars = 0;
+    let pendingLine = '';
+    let settled = false;
+
+    const fail = (statusCode: number, message: string) => {
+      if (settled) return;
+      settled = true;
+      reject(new ApiError(statusCode, message));
+    };
+
+    const consume = (flush = false) => {
+      const nextText = xhr.responseText.slice(consumedChars);
+      consumedChars = xhr.responseText.length;
+      pendingLine += nextText;
+      const lines = pendingLine.split('\n');
+      pendingLine = flush ? '' : (lines.pop() ?? '');
+      if (flush && lines[lines.length - 1] === '') lines.pop();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line) as ChatStreamEvent;
+          if (event.type === 'error') {
+            fail(xhr.status || 502, event.message);
+            return;
+          }
+          onEvent(event);
+        } catch {
+          fail(xhr.status || 502, 'Invalid streaming response from the server.');
+          return;
+        }
+      }
+    };
+
+    xhr.open('POST', `${getApiBaseUrl()}/chat/stream`);
+    xhr.timeout = 300000;
+    xhr.setRequestHeader('bypass-tunnel-reminder', 'true');
+    xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onprogress = () => {
+      if (xhr.status >= 200 && xhr.status < 300) consume();
+    };
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        fail(xhr.status, xhr.responseText || 'API error');
+        return;
+      }
+      consume(true);
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    xhr.onerror = () => fail(0, 'Network error. Please try again.');
+    xhr.ontimeout = () => fail(408, 'The AI response timed out.');
+    xhr.send(JSON.stringify(request));
+  });
 }
 
 export async function fetchVisitQueue(
@@ -262,7 +330,7 @@ export async function uploadFile(
   });
 
   if (!res.ok) {
-    throw new MedGemmaApiError(res.status, 'Upload failed');
+    throw new ApiError(res.status, 'Upload failed');
   }
 
   return res.json();

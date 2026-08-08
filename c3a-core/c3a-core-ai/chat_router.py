@@ -397,8 +397,9 @@ def _decision(
 
 def _has_patient_anchor(lowered: str, raw_query: str, patient_context: Any) -> list[str]:
     signals: list[str] = []
+    has_anchor_phrase = any(phrase in lowered for phrase in PATIENT_ANCHOR_PHRASES)
     patient_id = getattr(patient_context, "id", None)
-    if _normalise_uuid(patient_id):
+    if _normalise_uuid(patient_id) and has_anchor_phrase:
         signals.append("patient_context_id")
     patient_name = getattr(patient_context, "name", None)
     if isinstance(patient_name, str) and patient_name.strip():
@@ -407,7 +408,7 @@ def _has_patient_anchor(lowered: str, raw_query: str, patient_context: Any) -> l
             signals.append("patient_context_name")
     if UUID_PATTERN.search(raw_query):
         signals.append("patient_uuid_in_query")
-    if any(phrase in lowered for phrase in PATIENT_ANCHOR_PHRASES):
+    if has_anchor_phrase:
         signals.append("patient_anchor_phrase")
     return _dedupe(signals)
 
