@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import sys
 import unittest
@@ -22,13 +24,33 @@ from rag.citations import RetrievedChunk  # noqa: E402
 class FakeService:
     def __init__(self):
         self.last_rag_context = None
+        self.last_patient = None
 
     def status(self):
         return {"model": "fake", "loaded": True}
 
     async def generate_reply(self, **kwargs):
         self.last_rag_context = kwargs.get("rag_context")
+        self.last_patient = kwargs.get("patient")
         return self.last_rag_context or "direct reply"
+
+    async def stream_reply(self, **kwargs):
+        self.last_rag_context = kwargs.get("rag_context")
+        self.last_patient = kwargs.get("patient")
+        yield "Safe "
+        yield "response."
+
+
+class OverlapProbe:
+    def __init__(self):
+        self.active = 0
+        self.overlapped = False
+
+    async def checkpoint(self):
+        self.active += 1
+        await asyncio.sleep(0.02)
+        self.overlapped = self.overlapped or self.active > 1
+        self.active -= 1
 
 
 class FakeDbRetriever:
@@ -37,12 +59,15 @@ class FakeDbRetriever:
 
     def __init__(self):
         self.calls = 0
+        self.probe = None
 
     def status(self):
         return {"status": "fake"}
 
     async def retrieve(self, query, patient_context=None):
         self.calls += 1
+        if self.probe:
+            await self.probe.checkpoint()
         return DbContextResult(
             context=(
                 "## Retrieved PostgreSQL Synthetic Patient Context\n"
@@ -68,12 +93,15 @@ class FakeRagRetriever:
         self.calls = 0
         self.settings = SimpleNamespace(top_k=main.CHAT_RAG_TOP_K)
         self.score = score
+        self.probe = None
 
     def status(self):
         return {"status": "fake"}
 
     async def retrieve(self, query):
         self.calls += 1
+        if self.probe:
+            await self.probe.checkpoint()
         return [
             RetrievedChunk(
                 text="Care workers should monitor side effects and escalate red flags.",
@@ -143,6 +171,20 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertEqual(self.rag.calls, 1)
         self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "rag_only")
 
+    def test_linked_patient_general_pathway_question_does_not_call_db(self):
+        response = self.client.post(
+            "/ai/chat",
+            json=_chat_payload(
+                "According to the restorative care pathway guide, what is it designed to help older people achieve?"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.db.calls, 0)
+        self.assertEqual(self.rag.calls, 1)
+        self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "rag_only")
+        self.assertIsNone(self.service.last_patient)
+
     def test_hybrid_combines_db_and_rag_context(self):
         response = self.client.post(
             "/ai/chat",
@@ -155,9 +197,42 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertEqual(self.db.calls, 1)
         self.assertEqual(self.rag.calls, 1)
         self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "hybrid")
+        self.assertIsNotNone(self.service.last_patient)
         self.assertIn("## Retrieval Source Boundaries", self.service.last_rag_context)
         self.assertIn("## Retrieved PostgreSQL Synthetic Patient Context", self.service.last_rag_context)
         self.assertIn("## Retrieved Clinical Evidence", self.service.last_rag_context)
+
+    def test_hybrid_retrievals_run_concurrently(self):
+        probe = OverlapProbe()
+        self.db.probe = probe
+        self.rag.probe = probe
+
+        response = self.client.post(
+            "/ai/chat",
+            json=_chat_payload(
+                "Given this patient's medications, what should the care worker monitor today?"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(probe.overlapped)
+
+    def test_rag_only_stream_returns_incremental_tokens_and_sources(self):
+        with self.client.stream(
+            "POST",
+            "/ai/chat/stream",
+            json=_chat_payload(
+                "According to the restorative care pathway guide, what does it provide?"
+            ),
+        ) as response:
+            events = [json.loads(line) for line in response.iter_lines() if line]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([event["type"] for event in events], ["token", "token", "done"])
+        self.assertEqual("".join(event.get("content", "") for event in events), "Safe response.")
+        self.assertTrue(events[-1]["appendSources"])
+        self.assertEqual(len(events[-1]["sources"]), 1)
+        self.assertIsNone(self.service.last_patient)
 
     def test_uncertain_resolves_to_hybrid_when_both_sources_have_quality(self):
         response = self.client.post(

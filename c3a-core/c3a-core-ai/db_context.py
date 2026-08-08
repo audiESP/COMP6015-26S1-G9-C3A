@@ -7,12 +7,14 @@ import logging
 import os
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import psycopg
+from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
 
 
@@ -123,6 +125,10 @@ class DbContextRetriever:
         self.enabled = _env_bool("CHAT_DB_CONTEXT_ENABLED", True)
         self.max_patients = _env_int("CHAT_DB_CONTEXT_MAX_PATIENTS", 6)
         self.max_rows_per_table = _env_int("CHAT_DB_CONTEXT_MAX_ROWS_PER_TABLE", 8)
+        self.pool_min_size = _env_int("DATABASE_POOL_MIN_SIZE", 1)
+        self.pool_max_size = _env_int("DATABASE_POOL_MAX_SIZE", 5)
+        self.pool_timeout_seconds = float(os.getenv("DATABASE_POOL_TIMEOUT_SECONDS", "10"))
+        self._pool: ConnectionPool | None = None
         self._last_error: str | None = None
 
     @property
@@ -141,8 +147,42 @@ class DbContextRetriever:
             "database_url_configured": self.configured,
             "max_patients": self.max_patients,
             "max_rows_per_table": self.max_rows_per_table,
+            "pool_open": self._pool is not None,
             "last_error": self._last_error,
         }
+
+    def open(self) -> None:
+        if not self.enabled or not self.configured or self._pool is not None:
+            return
+        started_at = time.perf_counter()
+        pool = ConnectionPool(
+            conninfo=self.database_url,
+            min_size=self.pool_min_size,
+            max_size=self.pool_max_size,
+            timeout=self.pool_timeout_seconds,
+            kwargs={"row_factory": dict_row, "autocommit": True},
+            open=False,
+        )
+        try:
+            pool.open(wait=True, timeout=self.pool_timeout_seconds)
+        except Exception:
+            pool.close()
+            raise
+        self._pool = pool
+        self._last_error = None
+        logger.info(
+            "PostgreSQL context pool opened min_size=%s max_size=%s elapsed_ms=%.1f",
+            self.pool_min_size,
+            self.pool_max_size,
+            (time.perf_counter() - started_at) * 1000,
+        )
+
+    def close(self) -> None:
+        if self._pool is None:
+            return
+        self._pool.close()
+        self._pool = None
+        logger.info("PostgreSQL context pool closed")
 
     async def retrieve(self, query: str, patient_context: Any = None) -> DbContextResult:
         metadata = {
@@ -162,8 +202,6 @@ class DbContextRetriever:
 
         intents = _matched_intents(query)
         patient_id = _patient_id_from_context(patient_context) or _patient_id_from_query(query)
-        if patient_id and not intents:
-            intents = ["patients", "cald_profiles", "conditions", "medications", "allergies", "encounters", "observations"]
         if not intents:
             return DbContextResult(context="", metadata=metadata)
 
@@ -191,9 +229,22 @@ class DbContextRetriever:
             return DbContextResult(context="", metadata=metadata)
 
     def _retrieve_sync(self, query: str, patient_id: str | None, intents: list[str]) -> DbContextResult:
-        with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
+        connection_started_at = time.perf_counter()
+        with self._connection() as connection:
+            logger.info(
+                "PostgreSQL context connection acquired pooled=%s elapsed_ms=%.1f",
+                self._pool is not None,
+                (time.perf_counter() - connection_started_at) * 1000,
+            )
             with connection.cursor() as cursor:
-                patient_rows = _find_patients(cursor, query, patient_id, self.max_patients)
+                patient_rows = self._run_query(
+                    "patients.lookup",
+                    _find_patients,
+                    cursor,
+                    query,
+                    patient_id,
+                    self.max_patients,
+                )
                 patient_ids = [str(row["id"]) for row in patient_rows]
                 if patient_id and patient_id not in patient_ids:
                     patient_ids = [patient_id]
@@ -204,17 +255,27 @@ class DbContextRetriever:
 
                 if "patients" in intents or patient_rows:
                     if not patient_rows and ("patients" in intents or any(intent in intents for intent in _clinical_intents())):
-                        patient_rows = _sample_patients(cursor, self.max_patients)
+                        patient_rows = self._run_query(
+                            "patients.sample", _sample_patients, cursor, self.max_patients
+                        )
                         patient_ids = [str(row["id"]) for row in patient_rows]
                     _add_section(sections, "Patients", _format_patients(patient_rows))
                     tables.append("c3a_synthea_patients")
                     counts["patients"] = len(patient_rows)
 
                 if "cald_profiles" in intents:
-                    distribution_rows = _cald_distribution(cursor)
+                    distribution_rows = self._run_query(
+                        "cald.distribution", _cald_distribution, cursor
+                    )
                     if distribution_rows:
                         _add_section(sections, "CALD Distribution", _format_cald_distribution(distribution_rows))
-                    rows = _cald_profiles(cursor, patient_ids, self.max_patients)
+                    rows = self._run_query(
+                        "cald.profiles",
+                        _cald_profiles,
+                        cursor,
+                        patient_ids,
+                        self.max_patients,
+                    )
                     if rows:
                         _add_section(sections, "CALD Profiles", _format_cald_profiles(rows))
                     else:
@@ -224,31 +285,65 @@ class DbContextRetriever:
                     counts["cald_distribution"] = len(distribution_rows)
 
                 if "conditions" in intents:
-                    rows = _rows_for_patients(cursor, "conditions", patient_ids, self.max_rows_per_table)
+                    rows = self._run_query(
+                        "conditions",
+                        _rows_for_patients,
+                        cursor,
+                        "conditions",
+                        patient_ids,
+                        self.max_rows_per_table,
+                    )
                     _add_section(sections, "Conditions", _format_conditions(rows) or "No matching condition rows were found.")
                     tables.append("c3a_synthea_conditions")
                     counts["conditions"] = len(rows)
 
                 if "medications" in intents:
-                    rows = _rows_for_patients(cursor, "medications", patient_ids, self.max_rows_per_table)
+                    rows = self._run_query(
+                        "medications",
+                        _rows_for_patients,
+                        cursor,
+                        "medications",
+                        patient_ids,
+                        self.max_rows_per_table,
+                    )
                     _add_section(sections, "Medications", _format_medications(rows) or "No matching medication rows were found.")
                     tables.append("c3a_synthea_medications")
                     counts["medications"] = len(rows)
 
                 if "allergies" in intents:
-                    rows = _rows_for_patients(cursor, "allergies", patient_ids, self.max_rows_per_table)
+                    rows = self._run_query(
+                        "allergies",
+                        _rows_for_patients,
+                        cursor,
+                        "allergies",
+                        patient_ids,
+                        self.max_rows_per_table,
+                    )
                     _add_section(sections, "Allergies", _format_allergies(rows) or "No matching allergy rows were found.")
                     tables.append("c3a_synthea_allergies")
                     counts["allergies"] = len(rows)
 
                 if "encounters" in intents:
-                    rows = _rows_for_patients(cursor, "encounters", patient_ids, self.max_rows_per_table)
+                    rows = self._run_query(
+                        "encounters",
+                        _rows_for_patients,
+                        cursor,
+                        "encounters",
+                        patient_ids,
+                        self.max_rows_per_table,
+                    )
                     _add_section(sections, "Encounters", _format_encounters(rows) or "No matching encounter rows were found.")
                     tables.append("c3a_synthea_encounters")
                     counts["encounters"] = len(rows)
 
                 if "observations" in intents:
-                    rows = _observations(cursor, patient_ids, self.max_rows_per_table)
+                    rows = self._run_query(
+                        "observations",
+                        _observations,
+                        cursor,
+                        patient_ids,
+                        self.max_rows_per_table,
+                    )
                     _add_section(sections, "Observations", _format_observations(rows) or "No matching observation rows were found.")
                     tables.append("c3a_synthea_observations")
                     counts["observations"] = len(rows)
@@ -266,6 +361,32 @@ class DbContextRetriever:
                 "status": self.status(),
             },
         )
+
+    @contextmanager
+    def _connection(self):
+        if self._pool is not None:
+            with self._pool.connection(timeout=self.pool_timeout_seconds) as connection:
+                yield connection
+            return
+        with psycopg.connect(
+            self.database_url,
+            row_factory=dict_row,
+            autocommit=True,
+            connect_timeout=int(self.pool_timeout_seconds),
+        ) as connection:
+            yield connection
+
+    @staticmethod
+    def _run_query(label: str, function, *args):
+        started_at = time.perf_counter()
+        try:
+            return function(*args)
+        finally:
+            logger.info(
+                "PostgreSQL context query completed query=%s elapsed_ms=%.1f",
+                label,
+                (time.perf_counter() - started_at) * 1000,
+            )
 
 
 def _matched_intents(query: str) -> list[str]:

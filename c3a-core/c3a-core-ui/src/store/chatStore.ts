@@ -78,6 +78,25 @@ export function useChatStore() {
     [],
   );
 
+  const updateMessage = useCallback(
+    (sessionId: string, messageId: string, content: string) => {
+      setSessions((prev) =>
+        prev.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                messages: session.messages.map((message) =>
+                  message.id === messageId ? { ...message, content } : message,
+                ),
+                updatedAt: new Date(),
+              }
+            : session,
+        ),
+      );
+    },
+    [],
+  );
+
   const deleteSession = useCallback(
     (sessionId: string) => {
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
@@ -114,6 +133,7 @@ export function useChatStore() {
     createSession,
     ensureActiveSession,
     addMessage,
+    updateMessage,
     deleteSession,
     linkPatient,
     selectSession,

@@ -1,15 +1,18 @@
 """C3A Core AI service.
 
-This service owns MedGemma inference, Qdrant retrieval, and RAG citation data.
+This service owns Ollama inference, Qdrant retrieval, and RAG citation data.
 The API gateway calls this service over HTTP.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,12 +20,13 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from chat_router import RouteDecision, decide_route, with_effective_mode
 from db_context import DbContextResult, DbContextRetriever
 from logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
-from medgemma_service import MedGemmaService
+from ollama_service import OllamaService, OllamaServiceError, UnsupportedAttachmentError
 from rag.citations import RetrievedChunk
 from rag.retriever import RagRetriever
 
@@ -46,8 +50,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 AI_ENABLED = _env_bool("C3A_AI_ENABLED", True)
 CHAT_RAG_ENABLED = _env_bool("CHAT_RAG_ENABLED", True)
-CHAT_RAG_TOP_K = int(os.getenv("CHAT_RAG_TOP_K", os.getenv("RAG_TOP_K", "5")))
-CHAT_RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("CHAT_RAG_MAX_CHARS_PER_CHUNK", "900"))
+CHAT_RAG_TOP_K = int(os.getenv("CHAT_RAG_TOP_K", os.getenv("RAG_TOP_K", "3")))
+CHAT_RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("CHAT_RAG_MAX_CHARS_PER_CHUNK", "600"))
 CHAT_RAG_MIN_SCORE = float(os.getenv("CHAT_RAG_MIN_SCORE", "0.0"))
 
 app = FastAPI(title="C3A Core AI", version="1.0.0")
@@ -69,7 +73,7 @@ add_exception_handlers(
     debug_enabled=os.getenv("DEBUG_BACKEND", "").lower() == "true",
 )
 
-service = MedGemmaService(enabled=AI_ENABLED)
+service = OllamaService(enabled=AI_ENABLED)
 rag_retriever = RagRetriever()
 db_context_retriever = DbContextRetriever()
 
@@ -186,6 +190,20 @@ class AiChatResponse(BaseModel):
     model: dict[str, Any] = {}
 
 
+@dataclass(frozen=True)
+class PreparedChat:
+    latest_user_query: str
+    initial_route: RouteDecision
+    effective_route: RouteDecision
+    ambiguity_resolved_by: str
+    rag_chunks: list[RetrievedChunk]
+    accepted_rag_chunks: list[RetrievedChunk]
+    rag_elapsed_ms: float
+    db_context_result: DbContextResult
+    db_context_elapsed_ms: float
+    combined_context: str
+
+
 class RagSearchRequest(BaseModel):
     query: str
     topK: Optional[int] = None
@@ -193,6 +211,11 @@ class RagSearchRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_log_summary():
+    await service.check_health()
+    try:
+        await asyncio.to_thread(db_context_retriever.open)
+    except Exception as exc:
+        logger.warning("PostgreSQL context pool startup failed: %s", exc)
     logger.info(
         "C3A Core AI startup port=%s debug_backend=%s ai_enabled=%s model=%s device=%s rag=%s",
         os.getenv("C3A_AI_PORT", "8001"),
@@ -201,6 +224,14 @@ async def startup_log_summary():
         service.status().get("model"),
         service.status().get("device"),
         preview_object(rag_retriever.status()),
+    )
+
+
+@app.on_event("shutdown")
+async def shutdown_services():
+    await asyncio.gather(
+        asyncio.to_thread(db_context_retriever.close),
+        asyncio.to_thread(rag_retriever.close),
     )
 
 
@@ -309,10 +340,11 @@ def _rag_payload(chunks, query: str = "") -> dict[str, Any]:
 
 @app.get("/ai/health")
 async def health():
+    model_status = await service.check_health()
     return {
-        "status": "ok",
+        "status": "ok" if model_status["loaded"] else "degraded",
         "service": "c3a-core-ai",
-        "model": service.status(),
+        "model": model_status,
         "rag": rag_retriever.status(),
         "database_context": db_context_retriever.status(),
         "debug": {
@@ -326,74 +358,27 @@ async def health():
 @app.post("/ai/chat", response_model=AiChatResponse)
 async def chat(req: AiChatRequest):
     started_at = time.perf_counter()
-    latest_user_query = _latest_user_query(req.messages)
-    initial_route = decide_route(latest_user_query, req.patientContext, req.attachments)
-    logger.info(
-        "AI POST /ai/chat received messages=%s attachments=%s patient_context=%s route=%s route_confidence=%.2f latest_user_preview=%r",
-        len(req.messages),
-        len(req.attachments or []),
-        bool(req.patientContext),
-        initial_route.mode,
-        initial_route.confidence,
-        _preview(latest_user_query),
-    )
-    logger.debug("AI POST /ai/chat payload=%s",
-                 preview_object(req.model_dump(exclude_none=True)))
-
-    rag_started_at = time.perf_counter()
-    rag_chunks: list[RetrievedChunk] = []
-    should_use_rag = initial_route.uses_rag
-    if should_use_rag and CHAT_RAG_ENABLED and latest_user_query.strip() and rag_retriever.is_configured:
-        rag_chunks = await _retrieve_for_chat(latest_user_query)
-    else:
-        logger.info(
-            "AI POST /ai/chat RAG skipped route_uses_rag=%s enabled=%s configured=%s query_present=%s",
-            should_use_rag,
-            CHAT_RAG_ENABLED,
-            rag_retriever.is_configured,
-            bool(latest_user_query.strip()),
-        )
-    rag_elapsed_ms = (time.perf_counter() - rag_started_at) * 1000
-    accepted_rag_chunks = _filter_rag_chunks(rag_chunks)
-    rag_context = _build_chat_rag_context(accepted_rag_chunks)
-
-    db_context_started_at = time.perf_counter()
-    should_use_db = initial_route.uses_db
-    if should_use_db:
-        db_context_result = await db_context_retriever.retrieve(
-            latest_user_query,
-            patient_context=req.patientContext,
-        )
-    else:
-        logger.info("AI POST /ai/chat PostgreSQL context skipped route_uses_db=%s", should_use_db)
-        db_context_result = _empty_db_context_result()
-    db_context_elapsed_ms = (time.perf_counter() - db_context_started_at) * 1000
-    db_has_quality = _db_context_has_quality(db_context_result.metadata)
-    rag_has_quality = bool(accepted_rag_chunks)
-    effective_route, ambiguity_resolved_by = _resolve_effective_route(
-        initial_route,
-        db_has_quality=db_has_quality,
-        rag_has_quality=rag_has_quality,
-    )
-    combined_context = _context_for_route(
-        effective_route,
-        db_context_result.context if db_has_quality else "",
-        rag_context if rag_has_quality else "",
-        ambiguous_initial=initial_route.mode == "uncertain",
-    )
+    prepared = await _prepare_chat(req)
+    latest_user_query = prepared.latest_user_query
+    initial_route = prepared.initial_route
+    effective_route = prepared.effective_route
+    ambiguity_resolved_by = prepared.ambiguity_resolved_by
+    rag_chunks = prepared.rag_chunks
+    accepted_rag_chunks = prepared.accepted_rag_chunks
+    rag_elapsed_ms = prepared.rag_elapsed_ms
+    db_context_result = prepared.db_context_result
+    db_context_elapsed_ms = prepared.db_context_elapsed_ms
+    combined_context = prepared.combined_context
 
     generation_started_at = time.perf_counter()
-    reply = await service.generate_reply(
-        messages=[(message.role, message.content) for message in req.messages],
-        patient=req.patientContext,
-        worker=req.workerContext,
-        visit=req.visitContext,
-        tasks=req.taskContext or [],
-        events=req.eventContext or [],
-        risks=req.riskContext or [],
-        attachments=req.attachments or [],
-        rag_context=combined_context,
-    )
+    try:
+        reply = await service.generate_reply(
+            **_generation_kwargs(req, prepared),
+        )
+    except UnsupportedAttachmentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OllamaServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     logger.info(
         "AI POST /ai/chat completed initial_route=%s effective_route=%s ambiguity_resolved_by=%s rag_retrieved=%s rag_accepted=%s rag_elapsed_ms=%.1f db_context_used=%s db_context_elapsed_ms=%.1f db_result_counts=%s generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
         initial_route.mode,
@@ -413,7 +398,7 @@ async def chat(req: AiChatRequest):
     rag_payload.update(
         {
             "enabled_for_chat": CHAT_RAG_ENABLED,
-            "used_for_chat": rag_has_quality,
+            "used_for_chat": bool(accepted_rag_chunks),
             "top_k": CHAT_RAG_TOP_K,
             "status": rag_retriever.status(),
             "database_context": db_context_result.metadata,
@@ -422,16 +407,7 @@ async def chat(req: AiChatRequest):
                 "accepted_count": len(accepted_rag_chunks),
                 "min_score": CHAT_RAG_MIN_SCORE,
             },
-            "route": {
-                "initial_mode": initial_route.mode,
-                "effective_mode": effective_route.mode,
-                "uses_db": effective_route.uses_db,
-                "uses_rag": effective_route.uses_rag,
-                "confidence": initial_route.confidence,
-                "reason": initial_route.reason,
-                "matched_signals": initial_route.matched_signals,
-                "ambiguity_resolved_by": ambiguity_resolved_by,
-            },
+            "route": _route_payload(prepared),
         }
     )
     response = AiChatResponse(
@@ -443,6 +419,182 @@ async def chat(req: AiChatRequest):
     logger.debug("AI POST /ai/chat response=%s",
                  preview_object(response.model_dump()))
     return response
+
+
+@app.post("/ai/chat/stream")
+async def chat_stream(req: AiChatRequest):
+    started_at = time.perf_counter()
+    prepared = await _prepare_chat(req)
+
+    async def event_stream():
+        generation_started_at = time.perf_counter()
+        reply_chars = 0
+        try:
+            async for chunk in service.stream_reply(**_generation_kwargs(req, prepared)):
+                reply_chars += len(chunk)
+                yield _ndjson({"type": "token", "content": chunk})
+            sources = _source_labels(prepared.accepted_rag_chunks)
+            yield _ndjson(
+                {
+                    "type": "done",
+                    "sources": sources,
+                    "appendSources": bool(sources)
+                    and not prepared.db_context_result.metadata.get("used_for_chat"),
+                    "route": _route_payload(prepared),
+                    "model": service.status(),
+                }
+            )
+            logger.info(
+                "AI POST /ai/chat/stream completed route=%s rag_elapsed_ms=%.1f db_context_elapsed_ms=%.1f generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
+                prepared.effective_route.mode,
+                prepared.rag_elapsed_ms,
+                prepared.db_context_elapsed_ms,
+                (time.perf_counter() - generation_started_at) * 1000,
+                (time.perf_counter() - started_at) * 1000,
+                reply_chars,
+            )
+        except (UnsupportedAttachmentError, OllamaServiceError) as exc:
+            logger.warning("AI streaming generation failed: %s", exc, exc_info=True)
+            yield _ndjson({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _prepare_chat(req: AiChatRequest) -> PreparedChat:
+    latest_user_query = _latest_user_query(req.messages)
+    if req.attachments:
+        raise HTTPException(
+            status_code=422,
+            detail="The configured local Llama model does not support attachments",
+        )
+    initial_route = decide_route(latest_user_query, req.patientContext, req.attachments)
+    logger.info(
+        "AI POST /ai/chat received messages=%s attachments=%s patient_context=%s route=%s route_confidence=%.2f latest_user_preview=%r",
+        len(req.messages),
+        len(req.attachments or []),
+        bool(req.patientContext),
+        initial_route.mode,
+        initial_route.confidence,
+        _preview(latest_user_query),
+    )
+    logger.debug("AI POST /ai/chat payload=%s",
+                 preview_object(req.model_dump(exclude_none=True)))
+
+    (rag_chunks, rag_elapsed_ms), (db_context_result, db_context_elapsed_ms) = (
+        await asyncio.gather(
+            _retrieve_rag_context(latest_user_query, initial_route),
+            _retrieve_database_context(
+                latest_user_query,
+                req.patientContext,
+                initial_route,
+            ),
+        )
+    )
+    accepted_rag_chunks = _filter_rag_chunks(rag_chunks)
+    rag_context = _build_chat_rag_context(accepted_rag_chunks)
+    db_has_quality = _db_context_has_quality(db_context_result.metadata)
+    rag_has_quality = bool(accepted_rag_chunks)
+    effective_route, ambiguity_resolved_by = _resolve_effective_route(
+        initial_route,
+        db_has_quality=db_has_quality,
+        rag_has_quality=rag_has_quality,
+    )
+    combined_context = _context_for_route(
+        effective_route,
+        db_context_result.context if db_has_quality else "",
+        rag_context if rag_has_quality else "",
+        ambiguous_initial=initial_route.mode == "uncertain",
+    )
+
+    return PreparedChat(
+        latest_user_query=latest_user_query,
+        initial_route=initial_route,
+        effective_route=effective_route,
+        ambiguity_resolved_by=ambiguity_resolved_by,
+        rag_chunks=rag_chunks,
+        accepted_rag_chunks=accepted_rag_chunks,
+        rag_elapsed_ms=rag_elapsed_ms,
+        db_context_result=db_context_result,
+        db_context_elapsed_ms=db_context_elapsed_ms,
+        combined_context=combined_context,
+    )
+
+
+def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, Any]:
+    return {
+        "messages": [(message.role, message.content) for message in req.messages],
+        "patient": req.patientContext if prepared.effective_route.uses_db else None,
+        "worker": req.workerContext,
+        "visit": req.visitContext,
+        "tasks": req.taskContext or [],
+        "events": req.eventContext or [],
+        "risks": req.riskContext or [],
+        "attachments": req.attachments or [],
+        "rag_context": prepared.combined_context,
+    }
+
+
+def _route_payload(prepared: PreparedChat) -> dict[str, Any]:
+    return {
+        "initial_mode": prepared.initial_route.mode,
+        "effective_mode": prepared.effective_route.mode,
+        "uses_db": prepared.effective_route.uses_db,
+        "uses_rag": prepared.effective_route.uses_rag,
+        "confidence": prepared.initial_route.confidence,
+        "reason": prepared.initial_route.reason,
+        "matched_signals": prepared.initial_route.matched_signals,
+        "ambiguity_resolved_by": prepared.ambiguity_resolved_by,
+    }
+
+
+def _ndjson(event: dict[str, Any]) -> str:
+    return json.dumps(event, ensure_ascii=False) + "\n"
+
+
+async def _retrieve_rag_context(
+    query: str,
+    route: RouteDecision,
+) -> tuple[list[RetrievedChunk], float]:
+    started_at = time.perf_counter()
+    chunks: list[RetrievedChunk] = []
+    if route.uses_rag and CHAT_RAG_ENABLED and query.strip() and rag_retriever.is_configured:
+        chunks = await _retrieve_for_chat(query)
+    else:
+        logger.info(
+            "AI POST /ai/chat RAG skipped route_uses_rag=%s enabled=%s configured=%s query_present=%s",
+            route.uses_rag,
+            CHAT_RAG_ENABLED,
+            rag_retriever.is_configured,
+            bool(query.strip()),
+        )
+    return chunks, (time.perf_counter() - started_at) * 1000
+
+
+async def _retrieve_database_context(
+    query: str,
+    patient_context,
+    route: RouteDecision,
+) -> tuple[DbContextResult, float]:
+    started_at = time.perf_counter()
+    if route.uses_db:
+        result = await db_context_retriever.retrieve(
+            query,
+            patient_context=patient_context,
+        )
+    else:
+        logger.info(
+            "AI POST /ai/chat PostgreSQL context skipped route_uses_db=%s",
+            route.uses_db,
+        )
+        result = _empty_db_context_result()
+    return result, (time.perf_counter() - started_at) * 1000
 
 
 @app.post("/ai/rag/search")

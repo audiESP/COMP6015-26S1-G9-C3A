@@ -1,6 +1,6 @@
 // src/hooks/useChat.ts
 import { useState, useCallback } from 'react';
-import { sendChatMessage, MedGemmaApiError } from '../services/api';
+import { ApiError, streamChatMessage } from '../services/api';
 import { Attachment, PatientInfo, ScenarioContext } from '../types';
 
 interface UseChatOptions {
@@ -8,7 +8,8 @@ interface UseChatOptions {
   addMessage: (
     sessionId: string,
     msg: { role: 'user' | 'assistant'; content: string; attachments?: Attachment[] },
-  ) => void;
+  ) => { id: string };
+  updateMessage: (sessionId: string, messageId: string, content: string) => void;
   activeSession: { messages: any[]; patientInfo?: PatientInfo } | null;
   scenarioContext?: ScenarioContext;
 }
@@ -16,6 +17,7 @@ interface UseChatOptions {
 export function useChat({
   ensureActiveSession,
   addMessage,
+  updateMessage,
   activeSession,
   scenarioContext,
 }: UseChatOptions) {
@@ -51,7 +53,9 @@ export function useChat({
             mimeType: a.mimeType!,
           }));
 
-        const response = await sendChatMessage({
+        let streamedReply = '';
+        let assistantMessageId: string | null = null;
+        await streamChatMessage({
           messages: [{ role: 'user', content: text.trim() }],
           patientContext: scenarioContext?.patient ?? activeSession?.patientInfo,
           workerContext: scenarioContext?.worker,
@@ -60,15 +64,30 @@ export function useChat({
           eventContext: scenarioContext?.events,
           riskContext: scenarioContext?.alerts,
           attachments: apiAttachments,
-        });
-
-        addMessage(sessionId, {
-          role: 'assistant',
-          content: response.reply,
+        }, (event) => {
+          if (event.type === 'token') {
+            streamedReply += event.content;
+            if (assistantMessageId) {
+              updateMessage(sessionId, assistantMessageId, streamedReply);
+            } else {
+              assistantMessageId = addMessage(sessionId, {
+                role: 'assistant',
+                content: streamedReply,
+              }).id;
+            }
+          } else if (event.type === 'done' && event.appendSources && event.sources?.length) {
+            const sources = event.sources
+              .map((source, index) => `${index + 1}. ${source}`)
+              .join('\n');
+            streamedReply = `${streamedReply.trimEnd()}\n\nSources:\n${sources}`;
+            if (assistantMessageId) {
+              updateMessage(sessionId, assistantMessageId, streamedReply);
+            }
+          }
         });
       } catch (err) {
         const msg =
-          err instanceof MedGemmaApiError
+          err instanceof ApiError
             ? err.message
             : 'Network error. Please try again.';
         setError(msg);
@@ -76,7 +95,7 @@ export function useChat({
         setIsLoading(false);
       }
     },
-    [ensureActiveSession, addMessage, activeSession, scenarioContext],
+    [ensureActiveSession, addMessage, updateMessage, activeSession, scenarioContext],
   );
 
   return { sendMessage, isLoading, error, clearError: () => setError(null) };

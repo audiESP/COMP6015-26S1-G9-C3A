@@ -28,6 +28,17 @@ class ChatRouterTest(unittest.TestCase):
         self.assertTrue(decision.uses_rag)
         self.assertIn("guideline_phrase", decision.matched_signals)
 
+    def test_linked_patient_does_not_make_general_pathway_question_hybrid(self):
+        decision = decide_route(
+            "According to the restorative care pathway guide, what is it designed to help older people achieve?",
+            PATIENT,
+        )
+
+        self.assertEqual(decision.mode, "rag_only")
+        self.assertFalse(decision.uses_db)
+        self.assertTrue(decision.uses_rag)
+        self.assertNotIn("patient_context_id", decision.matched_signals)
+
     def test_patient_fact_plus_action_routes_to_hybrid(self):
         decision = decide_route(
             "Given this patient's medications, what should the care worker monitor today?",
@@ -38,6 +49,7 @@ class ChatRouterTest(unittest.TestCase):
         self.assertTrue(decision.uses_db)
         self.assertTrue(decision.uses_rag)
         self.assertIn("workflow_action_phrase", decision.matched_signals)
+        self.assertIn("patient_context_id", decision.matched_signals)
 
     def test_overlap_without_enough_intent_routes_to_uncertain(self):
         decision = decide_route("Show fall risk for residents")

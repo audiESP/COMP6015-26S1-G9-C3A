@@ -52,6 +52,7 @@ export const ChatScreen: React.FC<Props> = ({ apiBaseUrl, onClose }) => {
     activeSessionId,
     ensureActiveSession,
     addMessage,
+    updateMessage,
     deleteSession,
     linkPatient,
     selectSession,
@@ -62,6 +63,7 @@ export const ChatScreen: React.FC<Props> = ({ apiBaseUrl, onClose }) => {
   const { sendMessage, isLoading, error } = useChat({
     ensureActiveSession,
     addMessage,
+    updateMessage,
     activeSession,
   });
 
@@ -75,12 +77,12 @@ export const ChatScreen: React.FC<Props> = ({ apiBaseUrl, onClose }) => {
     setApiBaseUrl(apiBaseUrl);
   }, [apiBaseUrl]);
 
-  // Scroll to bottom when messages change
+  // Scroll to bottom as streamed assistant content grows.
   useEffect(() => {
     if (activeSession && activeSession.messages.length > 0) {
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     }
-  }, [activeSession?.messages.length]);
+  }, [activeSession?.messages.length, activeSession?.messages[activeSession.messages.length - 1]?.content]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const handleSend = useCallback(
@@ -226,7 +228,6 @@ export const ChatScreen: React.FC<Props> = ({ apiBaseUrl, onClose }) => {
       <AttachmentMenu
         visible={attachMenuOpen}
         onClose={() => setAttachMenuOpen(false)}
-        onAttachment={handleAttachment}
         onLinkPatient={() => setPatientModalOpen(true)}
       />
 
