@@ -130,8 +130,11 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     scenario.tasks.find((task) => ['issue', 'delayed', 'pending'].includes(task.status)) ??
     scenario.tasks[scenario.tasks.length - 1];
   const openTasks = scenario.tasks.filter((task) => task.status !== 'completed');
-  const nextStep = getNextStepCopy(scenario.lifecycleStep, scenario.visit.status, currentTask, priorityAlert);
+  const pendingTasks = scenario.tasks.filter((task) => task.status === 'pending');
+  const pendingTaskCount = pendingTasks.length;
   const isCompleted = scenario.visit.status === 'completed' || scenario.lifecycleStep === 'closed';
+  const canFinishVisit = visitStarted && pendingTaskCount === 0 && !isCompleted && !workflowSaving;
+  const nextStep = getNextStepCopy(scenario.lifecycleStep, scenario.visit.status, currentTask, priorityAlert);
   const visitsCompleted = visitQueue.filter(
     (visit) => visit.status === 'completed' && visit.id !== scenario.visit.id,
   ).length;
@@ -194,12 +197,12 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   }, [isCompleted, requestLocationCheckIn, scenario.visit.checkIn, startVisit, workflowSaving]);
 
   const handleFinishVisitWithCheckOut = useCallback(async () => {
-    if (isCompleted || workflowSaving) return;
+    if (isCompleted || workflowSaving || pendingTaskCount > 0) return;
     const checkOut = scenario.visit.checkOut
       ? undefined
       : await requestLocationCheckOut('Departure recorded when finishing the visit.');
     await completeVisit(checkOut);
-  }, [completeVisit, isCompleted, requestLocationCheckOut, scenario.visit.checkOut, workflowSaving]);
+  }, [completeVisit, isCompleted, pendingTaskCount, requestLocationCheckOut, scenario.visit.checkOut, workflowSaving]);
 
   const handleTaskIssue = async (taskId: string, type: TaskIssueType) => {
     if (workflowSaving) return;
@@ -296,6 +299,8 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             visitStarted={visitStarted}
             currentTask={currentTask}
             openTaskCount={openTasks.length}
+            pendingTaskCount={pendingTaskCount}
+            canFinish={canFinishVisit}
             visit={scenario.visit}
             disabled={workflowSaving}
             issueActionsOpen={issueActionsOpen}
@@ -548,6 +553,8 @@ function SimpleVisitActions({
   visitStarted,
   currentTask,
   openTaskCount,
+  pendingTaskCount,
+  canFinish,
   visit,
   disabled,
   issueActionsOpen,
@@ -565,6 +572,8 @@ function SimpleVisitActions({
   visitStarted: boolean;
   currentTask: CareTask;
   openTaskCount: number;
+  pendingTaskCount: number;
+  canFinish: boolean;
   visit: VisitContext;
   disabled: boolean;
   issueActionsOpen: boolean;
@@ -636,16 +645,18 @@ function SimpleVisitActions({
         <View style={styles.finishCopy}>
           <Text style={styles.finishText}>Finished the visit?</Text>
           <Text style={styles.finishHint}>
-            {visit.checkOut
-              ? `Check-out: ${locationSnapshotSummary(visit.checkOut)}`
-              : 'Check-out will be recorded when finishing this visit'}
+            {pendingTaskCount > 0
+              ? `${pendingTaskCount} task${pendingTaskCount > 1 ? 's' : ''} still pending. Complete or mark an issue before finishing.`
+              : visit.checkOut
+                ? `Check-out: ${locationSnapshotSummary(visit.checkOut)}`
+                : 'Check-out will be recorded when finishing this visit'}
           </Text>
         </View>
         <TouchableOpacity
-          style={[styles.finishButton, disabled && styles.finishButtonDisabled]}
+          style={[styles.finishButton, (!canFinish || disabled) && styles.finishButtonDisabled]}
           onPress={onCompleteVisit}
           activeOpacity={0.75}
-          disabled={disabled}
+          disabled={!canFinish || disabled}
         >
           <Text style={styles.finishButtonText}>{disabled ? 'Saving...' : 'Finish visit'}</Text>
         </TouchableOpacity>
