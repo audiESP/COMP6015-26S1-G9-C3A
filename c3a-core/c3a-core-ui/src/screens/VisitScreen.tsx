@@ -298,6 +298,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             isLastVisit={isLastVisit}
             visitStarted={visitStarted}
             currentTask={currentTask}
+            tasks={scenario.tasks}
             openTaskCount={openTasks.length}
             pendingTaskCount={pendingTaskCount}
             canFinish={canFinishVisit}
@@ -306,6 +307,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             issueActionsOpen={issueActionsOpen}
             onStartVisit={handleStartVisitWithCheckIn}
             onCompleteTask={completeCurrentTask}
+            onToggleTask={(task) => updateTask(task.id, task.status === 'completed' ? 'pending' : 'completed')}
             onToggleIssueActions={() => setIssueActionsOpen((value) => !value)}
             onIssue={handleIssue}
             onAskAi={handleAskAi}
@@ -552,6 +554,7 @@ function SimpleVisitActions({
   isLastVisit,
   visitStarted,
   currentTask,
+  tasks,
   openTaskCount,
   pendingTaskCount,
   canFinish,
@@ -560,6 +563,7 @@ function SimpleVisitActions({
   issueActionsOpen,
   onStartVisit,
   onCompleteTask,
+  onToggleTask,
   onToggleIssueActions,
   onIssue,
   onAskAi,
@@ -571,6 +575,7 @@ function SimpleVisitActions({
   isLastVisit: boolean;
   visitStarted: boolean;
   currentTask: CareTask;
+  tasks: CareTask[];
   openTaskCount: number;
   pendingTaskCount: number;
   canFinish: boolean;
@@ -579,6 +584,7 @@ function SimpleVisitActions({
   issueActionsOpen: boolean;
   onStartVisit: () => void;
   onCompleteTask: () => void;
+  onToggleTask: (task: CareTask) => void;
   onToggleIssueActions: () => void;
   onIssue: (type: TaskIssueType) => void;
   onAskAi: () => void;
@@ -641,6 +647,36 @@ function SimpleVisitActions({
           <ActionButton label="Safety concern" tone="danger" onPress={() => onIssue('safety_concern')} disabled={disabled} />
         </View>
       )}
+
+      <View style={styles.taskListInline}>
+        <Text style={styles.priorityLabel}>ALL TASKS</Text>
+        {tasks.map((task) => {
+          const isDone = task.status === 'completed';
+          const hasIssue = task.status === 'issue' || task.status === 'delayed' || task.status === 'skipped';
+          return (
+            <View key={task.id} style={[styles.taskRowContainer, disabled && styles.taskRowDisabled]}>
+              <View style={styles.taskRow}>
+                <View style={[styles.taskCheck, isDone && styles.taskCheckDone, hasIssue && styles.taskCheckIssue]}>
+                  <Text style={styles.taskCheckText}>{isDone ? '✓' : hasIssue ? '!' : ''}</Text>
+                </View>
+                <View style={styles.taskCopy}>
+                  <Text style={styles.taskLabel}>{task.label}</Text>
+                  <Text style={styles.taskDetail}>{task.dueAt ? `${task.dueAt} · ` : ''}{task.detail}</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.taskActionButton, isDone && styles.taskActionButtonDone, disabled && styles.taskActionButtonDisabled]}
+                  onPress={() => onToggleTask(task)}
+                  disabled={disabled || isDone}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>{isDone ? 'Done' : 'Done'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
       <View style={styles.finishBox}>
         <View style={styles.finishCopy}>
           <Text style={styles.finishText}>Finished the visit?</Text>
@@ -1216,6 +1252,7 @@ const styles = StyleSheet.create({
   alertTitle: { color: '#16231E', fontSize: 14, fontWeight: '800' },
   alertMessage: { color: '#3D4E47', fontSize: 13, lineHeight: 19, marginTop: 4 },
   taskList: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginBottom: 12 },
+  taskListInline: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginTop: 12 },
   taskRowContainer: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E4ECE8' },
   taskRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
   taskRowDisabled: { opacity: 0.62 },
