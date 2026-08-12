@@ -666,10 +666,10 @@ function SimpleVisitActions({
                 <TouchableOpacity
                   style={[styles.taskActionButton, isDone && styles.taskActionButtonDone, disabled && styles.taskActionButtonDisabled]}
                   onPress={() => onToggleTask(task)}
-                  disabled={disabled || isDone}
+                  disabled={disabled}
                   activeOpacity={0.75}
                 >
-                  <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>{isDone ? 'Done' : 'Done'}</Text>
+                  <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>{isDone ? 'Undo' : 'Done'}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -978,10 +978,10 @@ function TaskRow({
           <TouchableOpacity
             style={[styles.taskActionButton, isDone && styles.taskActionButtonDone, disabled && styles.taskActionButtonDisabled]}
             onPress={onDone}
-            disabled={disabled || isDone}
+            disabled={disabled}
             activeOpacity={0.75}
           >
-            <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>Done</Text>
+            <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>{isDone ? 'Undo' : 'Done'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.taskActionButton, styles.taskProblemButton, disabled && styles.taskActionButtonDisabled]}
