@@ -126,6 +126,7 @@ class OllamaService:
         tasks=None,
         events=None,
         risks=None,
+        checklist=None,
         attachments=None,
         rag_context=None,
     ) -> str:
@@ -140,6 +141,7 @@ class OllamaService:
                 tasks=tasks,
                 events=events,
                 risks=risks,
+                checklist=checklist,
                 attachments=attachments,
                 rag_context=rag_context,
             )
@@ -160,6 +162,7 @@ class OllamaService:
         tasks=None,
         events=None,
         risks=None,
+        checklist=None,
         attachments=None,
         rag_context=None,
     ) -> AsyncIterator[str]:
@@ -183,6 +186,7 @@ class OllamaService:
             tasks=tasks or [],
             events=events or [],
             risks=risks or [],
+            checklist=checklist or [],
             rag_context=rag_context,
             max_context_chars=self.max_context_chars,
         )
@@ -245,6 +249,7 @@ def _build_ollama_messages(
     tasks=None,
     events=None,
     risks=None,
+    checklist=None,
     rag_context=None,
     max_context_chars=12000,
 ) -> list[dict[str, str]]:
@@ -253,7 +258,13 @@ def _build_ollama_messages(
     if patient_context:
         context_parts.append(patient_context)
     workflow_context = _build_workflow_context(
-        worker, visit, current_task, tasks or [], events or [], risks or []
+        worker=worker,
+        visit=visit,
+        current_task=current_task,
+        tasks=tasks or [],
+        events=events or [],
+        risks=risks or [],
+        checklist=checklist or [],
     )
     if workflow_context:
         context_parts.append(workflow_context)
@@ -299,12 +310,16 @@ def _build_patient_context(patient) -> str:
             parts.append(f"- {label}: {value}")
     for label, attribute in [
         ("Care risk flags", "careRiskFlags"),
+        ("Past medical history", "pastMedicalHistory"),
         ("Allergies", "allergies"),
         ("Medications", "medications"),
     ]:
         value = getattr(patient, attribute, None)
         if value:
-            parts.append(f"- {label}: {', '.join(value)}")
+            if isinstance(value, str):
+                parts.append(f"- {label}: {value}")
+            else:
+                parts.append(f"- {label}: {', '.join(str(item) for item in value)}")
     return "\n".join(parts)
 
 
@@ -315,6 +330,7 @@ def _build_workflow_context(
     tasks=None,
     events=None,
     risks=None,
+    checklist=None,
 ) -> str:
     parts: list[str] = []
     if worker:
@@ -386,6 +402,13 @@ def _build_workflow_context(
             if detail:
                 line += f"; {detail}"
             parts.append(line)
+    if checklist:
+        parts.append("## Incident Checklist")
+        for item in checklist[:12]:
+            label = getattr(item, "label", None) or getattr(item, "id", "Checklist item")
+            completed = getattr(item, "completed", False)
+            status = "complete" if completed else "incomplete"
+            parts.append(f"- {label}: {status}")
     if events:
         parts.append("## Recent Real-World Events")
         for event in events[:8]:

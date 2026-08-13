@@ -35,6 +35,7 @@ export interface PatientInfo {
   careRiskFlags?: string[];
   allergies?: string[];
   medications?: string[];
+  pastMedicalHistory?: string;
 }
 
 export interface ChatSession {
@@ -195,6 +196,7 @@ export interface ApiChatRequest {
   taskContext?: CareTask[];
   eventContext?: ScenarioEvent[];
   riskContext?: RiskAlert[];
+  checklistContext?: IncidentChecklistItem[];
   attachments?: { type: string; base64: string; mimeType: string }[];
 }
 

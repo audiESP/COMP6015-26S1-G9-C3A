@@ -68,7 +68,12 @@ class OllamaMessageTest(unittest.TestCase):
                 ("assistant", "It supports safe medication care."),
                 ("user", "What should happen next?"),
             ],
-            patient=SimpleNamespace(name="Jane", medications=["Warfarin"]),
+            patient=SimpleNamespace(
+                name="Jane",
+                medications=["Warfarin"],
+                allergies=["Penicillin"],
+                pastMedicalHistory="Hypertension; Falls risk",
+            ),
             current_task=SimpleNamespace(
                 id="medication",
                 label="Medication support",
@@ -85,6 +90,8 @@ class OllamaMessageTest(unittest.TestCase):
         self.assertIn("## Current Priority Care Task", messages[0]["content"])
         self.assertIn("Medication support: delayed", messages[0]["content"])
         self.assertIn("Treat this as the current task", messages[0]["content"])
+        self.assertIn("Penicillin", messages[0]["content"])
+        self.assertIn("Hypertension; Falls risk", messages[0]["content"])
         self.assertIn("[Source 1]", messages[0]["content"])
         self.assertEqual(
             messages[1:3],

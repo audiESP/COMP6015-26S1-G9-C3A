@@ -26,6 +26,14 @@ class ChatRouterTest(unittest.TestCase):
         self.assertIn("patient_context_id", decision.matched_signals)
         self.assertIn("patient_record_term", decision.matched_signals)
 
+    def test_progress_notes_query_routes_to_database_only(self):
+        decision = decide_route("Retrieve the patient's previous progress notes.", PATIENT)
+
+        self.assertEqual(decision.mode, "database_only")
+        self.assertTrue(decision.uses_db)
+        self.assertFalse(decision.uses_rag)
+        self.assertIn("patient_record_term", decision.matched_signals)
+
     def test_general_guidance_overlap_routes_to_rag_only(self):
         decision = decide_route("What are safe medication management steps for an older adult at home?")
 

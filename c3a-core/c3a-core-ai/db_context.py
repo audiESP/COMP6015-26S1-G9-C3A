@@ -59,7 +59,7 @@ CALD_TERMS = {
 CALD_PHRASES = {"care risk", "care risks", "health literacy"}
 
 CONDITION_TERMS = {"condition", "conditions", "diagnosis", "diagnoses", "problem", "problems"}
-CONDITION_PHRASES = {"medical history"}
+CONDITION_PHRASES = {"medical history", "past medical history"}
 
 MEDICATION_TERMS = {
     "medication",
@@ -74,6 +74,17 @@ MEDICATION_TERMS = {
 
 ALLERGY_TERMS = {"allergy", "allergies", "allergic"}
 ENCOUNTER_TERMS = {"encounter", "encounters", "visit", "visits", "admission", "admissions"}
+ENCOUNTER_PHRASES = {
+    "home care visit",
+    "home care visit record",
+    "home care visit records",
+    "previous home care visit record",
+    "previous home care visit records",
+    "progress note",
+    "progress notes",
+    "previous progress note",
+    "previous progress notes",
+}
 
 OBSERVATION_TERMS = {
     "observation",
@@ -403,7 +414,7 @@ def _matched_intents(query: str) -> list[str]:
         intents.append("medications")
     if _has_any(words, lowered, ALLERGY_TERMS, set()):
         intents.append("allergies")
-    if _has_any(words, lowered, ENCOUNTER_TERMS, set()):
+    if _has_any(words, lowered, ENCOUNTER_TERMS, ENCOUNTER_PHRASES):
         intents.append("encounters")
     if _has_any(words, lowered, OBSERVATION_TERMS, OBSERVATION_PHRASES):
         intents.append("observations")

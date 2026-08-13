@@ -70,6 +70,7 @@ export function useChat({
           taskContext: scenarioContext?.tasks,
           eventContext: scenarioContext?.events,
           riskContext: scenarioContext?.alerts,
+          checklistContext: scenarioContext?.incidentChecklist,
           attachments: apiAttachments,
         }, (event) => {
           if (event.type === 'token') {

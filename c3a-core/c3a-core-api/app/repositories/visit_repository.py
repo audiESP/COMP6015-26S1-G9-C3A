@@ -559,6 +559,7 @@ class VisitRepository:
                 "careRiskFlags": _list_or_default(row["profile_care_risk_flags"], row["care_risk_flags"]),
                 "allergies": _list_or_default(row["allergies_override"], row["allergies"]),
                 "medications": _list_or_default(row["medications_override"], row["medications"]),
+                "pastMedicalHistory": _first_or_join(row["conditions"]),
             }
         )
         worker = {
@@ -731,6 +732,7 @@ class VisitRepository:
                 "careRiskFlags": _list_or_default(row["profile_care_risk_flags"], row["care_risk_flags"]),
                 "allergies": _list_or_default(row["allergies_override"], row["allergies"]),
                 "medications": _list_or_default(row["medications_override"], row["medications"]),
+                "pastMedicalHistory": _first_or_join(row["conditions"]),
             }
         )
 

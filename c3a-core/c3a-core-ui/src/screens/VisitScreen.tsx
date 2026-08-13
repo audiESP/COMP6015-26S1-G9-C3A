@@ -71,6 +71,7 @@ const stepLabels: Record<VisitLifecycleStep, string> = {
 export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const scrollRef = useRef<ScrollView>(null);
   const [activeSection, setActiveSection] = useState<VisitSection>('assistant');
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [issueActionsOpen, setIssueActionsOpen] = useState(false);
   const [taskIssueMenuOpen, setTaskIssueMenuOpen] = useState<string | null>(null);
   const [shiftSummaryOpen, setShiftSummaryOpen] = useState(false);
@@ -129,9 +130,18 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const currentTask =
     scenario.tasks.find((task) => ['issue', 'delayed', 'pending'].includes(task.status)) ??
     scenario.tasks[scenario.tasks.length - 1];
+  useEffect(() => {
+    if (!selectedTaskId || !scenario.tasks.some((task) => task.id === selectedTaskId)) {
+      setSelectedTaskId(currentTask?.id ?? null);
+    }
+  }, [currentTask, scenario.tasks, selectedTaskId]);
+  const selectedTask = scenario.tasks.find((task) => task.id === selectedTaskId) ?? currentTask;
   const openTasks = scenario.tasks.filter((task) => task.status !== 'completed');
-  const nextStep = getNextStepCopy(scenario.lifecycleStep, scenario.visit.status, currentTask, priorityAlert);
+  const pendingTasks = scenario.tasks.filter((task) => task.status === 'pending');
+  const pendingTaskCount = pendingTasks.length;
   const isCompleted = scenario.visit.status === 'completed' || scenario.lifecycleStep === 'closed';
+  const canFinishVisit = visitStarted && pendingTaskCount === 0 && !isCompleted && !workflowSaving;
+  const nextStep = getNextStepCopy(scenario.lifecycleStep, scenario.visit.status, currentTask, priorityAlert);
   const visitsCompleted = visitQueue.filter(
     (visit) => visit.status === 'completed' && visit.id !== scenario.visit.id,
   ).length;
@@ -177,12 +187,27 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   );
 
   const handleIssue = async (type: TaskIssueType) => {
-    if (workflowSaving) return;
+    if (workflowSaving || !selectedTask) return;
     setIssueActionsOpen(false);
     setTaskIssueMenuOpen(null);
-    await reportTaskIssue(currentTask.id, type);
+    await reportTaskIssue(selectedTask.id, type);
     setActiveSection('care');
   };
+
+  const handleSelectTask = useCallback((task: CareTask) => {
+    setSelectedTaskId(task.id);
+    setActiveSection('care');
+  }, []);
+
+  const handleToggleTask = useCallback((task: CareTask) => {
+    setSelectedTaskId(task.id);
+    return updateTask(task.id, task.status === 'completed' ? 'pending' : 'completed');
+  }, [updateTask]);
+
+  const handleCompleteSelectedTask = useCallback(() => {
+    if (!selectedTask) return;
+    return updateTask(selectedTask.id, selectedTask.status === 'completed' ? 'pending' : 'completed');
+  }, [selectedTask, updateTask]);
 
   const handleStartVisitWithCheckIn = useCallback(async () => {
     if (isCompleted || workflowSaving) return;
@@ -194,12 +219,12 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   }, [isCompleted, requestLocationCheckIn, scenario.visit.checkIn, startVisit, workflowSaving]);
 
   const handleFinishVisitWithCheckOut = useCallback(async () => {
-    if (isCompleted || workflowSaving) return;
+    if (isCompleted || workflowSaving || pendingTaskCount > 0) return;
     const checkOut = scenario.visit.checkOut
       ? undefined
       : await requestLocationCheckOut('Departure recorded when finishing the visit.');
     await completeVisit(checkOut);
-  }, [completeVisit, isCompleted, requestLocationCheckOut, scenario.visit.checkOut, workflowSaving]);
+  }, [completeVisit, isCompleted, pendingTaskCount, requestLocationCheckOut, scenario.visit.checkOut, workflowSaving]);
 
   const handleTaskIssue = async (taskId: string, type: TaskIssueType) => {
     if (workflowSaving) return;
@@ -286,7 +311,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
           />
 
           <CurrentTaskCard
-            task={currentTask}
+            task={selectedTask ?? currentTask}
             nextStep={nextStep}
           />
 
@@ -294,13 +319,18 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             isCompleted={isCompleted}
             isLastVisit={isLastVisit}
             visitStarted={visitStarted}
-            currentTask={currentTask}
+            currentTask={selectedTask ?? currentTask}
+            tasks={scenario.tasks}
             openTaskCount={openTasks.length}
+            pendingTaskCount={pendingTaskCount}
+            canFinish={canFinishVisit}
             visit={scenario.visit}
             disabled={workflowSaving}
             issueActionsOpen={issueActionsOpen}
             onStartVisit={handleStartVisitWithCheckIn}
-            onCompleteTask={completeCurrentTask}
+            onCompleteTask={handleCompleteSelectedTask}
+            onToggleTask={handleToggleTask}
+            onSelectTask={handleSelectTask}
             onToggleIssueActions={() => setIssueActionsOpen((value) => !value)}
             onIssue={handleIssue}
             onAskAi={handleAskAi}
@@ -360,9 +390,9 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               tasks={scenario.tasks}
               alerts={activeAlerts}
               visit={scenario.visit}
-              onToggleTask={(task) =>
-                updateTask(task.id, task.status === 'completed' ? 'pending' : 'completed')
-              }
+              selectedTaskId={selectedTaskId}
+              onSelectTask={handleSelectTask}
+              onToggleTask={handleToggleTask}
               openIssueTaskId={taskIssueMenuOpen}
               onToggleTaskIssueMenu={(taskId) =>
                 setTaskIssueMenuOpen((current) => (current === taskId ? null : taskId))
@@ -548,12 +578,17 @@ function SimpleVisitActions({
   isLastVisit,
   visitStarted,
   currentTask,
+  tasks,
   openTaskCount,
+  pendingTaskCount,
+  canFinish,
   visit,
   disabled,
   issueActionsOpen,
   onStartVisit,
   onCompleteTask,
+  onToggleTask,
+  onSelectTask,
   onToggleIssueActions,
   onIssue,
   onAskAi,
@@ -565,12 +600,17 @@ function SimpleVisitActions({
   isLastVisit: boolean;
   visitStarted: boolean;
   currentTask: CareTask;
+  tasks: CareTask[];
   openTaskCount: number;
+  pendingTaskCount: number;
+  canFinish: boolean;
   visit: VisitContext;
   disabled: boolean;
   issueActionsOpen: boolean;
   onStartVisit: () => void;
   onCompleteTask: () => void;
+  onToggleTask: (task: CareTask) => void;
+  onSelectTask: (task: CareTask) => void;
   onToggleIssueActions: () => void;
   onIssue: (type: TaskIssueType) => void;
   onAskAi: () => void;
@@ -622,7 +662,7 @@ function SimpleVisitActions({
         {currentTask.detail} {openTaskCount > 1 ? `${openTaskCount} items still need attention.` : 'This is the last open item.'}
       </Text>
       <View style={styles.quickActionBar}>
-        <ActionButton label={disabled ? 'Saving...' : 'Done'} tone="success" onPress={onCompleteTask} disabled={disabled} />
+        <ActionButton label={disabled ? 'Saving...' : currentTask.status === 'completed' ? 'Undo' : 'Done'} tone="success" onPress={onCompleteTask} disabled={disabled} />
         <ActionButton label="Problem" tone="warn" onPress={onToggleIssueActions} disabled={disabled} />
         <ActionButton label="Ask AI" tone="muted" onPress={onAskAi} />
       </View>
@@ -633,20 +673,59 @@ function SimpleVisitActions({
           <ActionButton label="Safety concern" tone="danger" onPress={() => onIssue('safety_concern')} disabled={disabled} />
         </View>
       )}
+
+      <View style={styles.taskListInline}>
+        <Text style={styles.priorityLabel}>ALL TASKS</Text>
+        {tasks.map((task) => {
+          const isDone = task.status === 'completed';
+          const hasIssue = task.status === 'issue' || task.status === 'delayed' || task.status === 'skipped';
+          return (
+            <View key={task.id} style={[styles.taskRowContainer, disabled && styles.taskRowDisabled, task.id === currentTask.id && styles.taskRowSelected]}>
+              <View style={styles.taskRow}>
+                <TouchableOpacity
+                  style={styles.taskContentButton}
+                  onPress={() => onSelectTask(task)}
+                  activeOpacity={0.8}
+                  disabled={disabled}
+                >
+                  <View style={[styles.taskCheck, isDone && styles.taskCheckDone, hasIssue && styles.taskCheckIssue]}>
+                    <Text style={styles.taskCheckText}>{isDone ? '✓' : hasIssue ? '!' : ''}</Text>
+                  </View>
+                  <View style={styles.taskCopy}>
+                    <Text style={styles.taskLabel}>{task.label}</Text>
+                    <Text style={styles.taskDetail}>{task.dueAt ? `${task.dueAt} · ` : ''}{task.detail}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.taskActionButton, isDone && styles.taskActionButtonDone, disabled && styles.taskActionButtonDisabled]}
+                  onPress={() => onToggleTask(task)}
+                  disabled={disabled}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>{isDone ? 'Undo' : 'Done'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
       <View style={styles.finishBox}>
         <View style={styles.finishCopy}>
           <Text style={styles.finishText}>Finished the visit?</Text>
           <Text style={styles.finishHint}>
-            {visit.checkOut
-              ? `Check-out: ${locationSnapshotSummary(visit.checkOut)}`
-              : 'Check-out will be recorded when finishing this visit'}
+            {pendingTaskCount > 0
+              ? `${pendingTaskCount} task${pendingTaskCount > 1 ? 's' : ''} still pending. Complete or mark an issue before finishing.`
+              : visit.checkOut
+                ? `Check-out: ${locationSnapshotSummary(visit.checkOut)}`
+                : 'Check-out will be recorded when finishing this visit'}
           </Text>
         </View>
         <TouchableOpacity
-          style={[styles.finishButton, disabled && styles.finishButtonDisabled]}
+          style={[styles.finishButton, (!canFinish || disabled) && styles.finishButtonDisabled]}
           onPress={onCompleteVisit}
           activeOpacity={0.75}
-          disabled={disabled}
+          disabled={!canFinish || disabled}
         >
           <Text style={styles.finishButtonText}>{disabled ? 'Saving...' : 'Finish visit'}</Text>
         </TouchableOpacity>
@@ -778,6 +857,8 @@ function CareDetailsPanel({
   visitStarted,
   disabled,
   openIssueTaskId,
+  selectedTaskId,
+  onSelectTask,
   onToggleTask,
   onToggleTaskIssueMenu,
   onTaskIssue,
@@ -793,8 +874,10 @@ function CareDetailsPanel({
   visitStarted: boolean;
   disabled: boolean;
   openIssueTaskId: string | null;
+  selectedTaskId: string | null;
   tasks: CareTask[];
   alerts: RiskAlert[];
+  onSelectTask: (task: CareTask) => void;
   onToggleTask: (task: CareTask) => void;
   onToggleTaskIssueMenu: (taskId: string) => void;
   onTaskIssue: (taskId: string, type: TaskIssueType) => void;
@@ -811,21 +894,6 @@ function CareDetailsPanel({
         <SummaryLine label="Check-out" value={visit.checkOut ? locationSnapshotSummary(visit.checkOut) : 'Not recorded'} />
       </View>
 
-      <SectionHeader title="Care checklist" detail={visitStarted ? 'Tap Done or Problem' : 'Start visit first'} />
-      <View style={styles.taskList}>
-        {tasks.map((task) => (
-          <TaskRow
-            key={task.id}
-            task={task}
-            disabled={!visitStarted || disabled}
-            issueMenuOpen={openIssueTaskId === task.id}
-            onDone={() => onToggleTask(task)}
-            onToggleIssue={() => onToggleTaskIssueMenu(task.id)}
-            onIssue={(type) => onTaskIssue(task.id, type)}
-          />
-        ))}
-      </View>
-
       <SectionHeader title="What to keep in mind" detail="Patient needs" />
       <View style={styles.contextPanel}>
         <SummaryLine label="Language" value={`${patient.preferredLanguage ?? 'Unknown'}${patient.interpreterRequired ? ' · interpreter recommended' : ''}`} />
@@ -833,6 +901,7 @@ function CareDetailsPanel({
         <SummaryLine label="Communication" value={patient.communicationNotes ?? 'Not recorded'} />
         <SummaryLine label="Dietary" value={patient.dietaryNotes ?? 'Not recorded'} />
         <SummaryLine label="Diagnosis" value={patient.diagnosis ?? 'Not recorded'} />
+        <SummaryLine label="Past medical history" value={patient.pastMedicalHistory ?? 'Not recorded'} />
         <SummaryLine label="Culture" value={patient.culturalBackground ?? 'Not recorded'} />
         <SummaryLine label="Cognition" value={patient.cognitiveStatus ?? 'Not recorded'} />
         <SummaryLine label="Worker" value={worker} />
@@ -920,15 +989,19 @@ function AlertCard({ alert }: { alert: RiskAlert }) {
 
 function TaskRow({
   task,
+  isSelected,
   disabled,
   issueMenuOpen,
+  onSelect,
   onDone,
   onToggleIssue,
   onIssue,
 }: {
   task: CareTask;
+  isSelected: boolean;
   disabled: boolean;
   issueMenuOpen: boolean;
+  onSelect: () => void;
   onDone: () => void;
   onToggleIssue: () => void;
   onIssue: (type: TaskIssueType) => void;
@@ -936,24 +1009,26 @@ function TaskRow({
   const isDone = task.status === 'completed';
   const hasProblem = task.status === 'issue' || task.status === 'delayed' || task.status === 'skipped';
   return (
-    <View style={[styles.taskRowContainer, disabled && styles.taskRowDisabled]}>
+    <View style={[styles.taskRowContainer, disabled && styles.taskRowDisabled, isSelected && styles.taskRowSelected]}>
       <View style={styles.taskRow}>
-        <View style={[styles.taskCheck, isDone && styles.taskCheckDone, hasProblem && styles.taskCheckIssue]}>
-          <Text style={styles.taskCheckText}>{isDone ? '✓' : hasProblem ? '!' : ''}</Text>
-        </View>
-        <View style={styles.taskCopy}>
-          <Text style={styles.taskLabel}>{task.label}</Text>
-          <Text style={styles.taskDetail}>{task.dueAt} · {task.detail}</Text>
-          {hasProblem && <Text style={styles.taskProblemText}>{taskStatusCopy(task.status)}</Text>}
-        </View>
+        <TouchableOpacity style={styles.taskContentButton} onPress={onSelect} activeOpacity={0.8} disabled={disabled}>
+          <View style={[styles.taskCheck, isDone && styles.taskCheckDone, hasProblem && styles.taskCheckIssue]}>
+            <Text style={styles.taskCheckText}>{isDone ? '✓' : hasProblem ? '!' : ''}</Text>
+          </View>
+          <View style={styles.taskCopy}>
+            <Text style={styles.taskLabel}>{task.label}</Text>
+            <Text style={styles.taskDetail}>{task.dueAt} · {task.detail}</Text>
+            {hasProblem && <Text style={styles.taskProblemText}>{taskStatusCopy(task.status)}</Text>}
+          </View>
+        </TouchableOpacity>
         <View style={styles.taskButtons}>
           <TouchableOpacity
             style={[styles.taskActionButton, isDone && styles.taskActionButtonDone, disabled && styles.taskActionButtonDisabled]}
             onPress={onDone}
-            disabled={disabled || isDone}
+            disabled={disabled}
             activeOpacity={0.75}
           >
-            <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>Done</Text>
+            <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>{isDone ? 'Undo' : 'Done'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.taskActionButton, styles.taskProblemButton, disabled && styles.taskActionButtonDisabled]}
@@ -1224,9 +1299,12 @@ const styles = StyleSheet.create({
   alertTitle: { color: '#16231E', fontSize: 14, fontWeight: '800' },
   alertMessage: { color: '#3D4E47', fontSize: 13, lineHeight: 19, marginTop: 4 },
   taskList: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginBottom: 12 },
+  taskListInline: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginTop: 12 },
   taskRowContainer: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E4ECE8' },
+  taskRowSelected: { backgroundColor: '#EEF7F1', borderBottomColor: '#2D6A4F' },
   taskRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
   taskRowDisabled: { opacity: 0.62 },
+  taskContentButton: { flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 8 },
   taskCheck: { width: 24, height: 24, borderRadius: 6, borderWidth: 1, borderColor: '#B8C9C1', alignItems: 'center', justifyContent: 'center' },
   taskCheckDone: { backgroundColor: '#2F7D46', borderColor: '#2F7D46' },
   taskCheckIssue: { backgroundColor: '#A83B32', borderColor: '#A83B32' },

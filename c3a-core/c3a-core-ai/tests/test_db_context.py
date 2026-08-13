@@ -24,6 +24,18 @@ class DbContextRetrieverTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.context, "")
         self.assertEqual(result.metadata["matched_intents"], [])
 
+    async def test_previous_progress_notes_trigger_encounter_intent(self):
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://configured"}):
+            retriever = DbContextRetriever()
+
+        with patch.object(retriever, "_retrieve_sync") as retrieve_sync:
+            await retriever.retrieve(
+                "Retrieve the patient's previous progress notes.",
+                patient_context=PATIENT,
+            )
+
+        retrieve_sync.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
