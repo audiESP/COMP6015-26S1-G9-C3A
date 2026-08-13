@@ -26,6 +26,8 @@ class FakeService:
     def __init__(self):
         self.last_rag_context = None
         self.last_patient = None
+        self.last_current_task = None
+        self.last_messages = None
 
     def status(self):
         return {"model": "fake", "loaded": True}
@@ -33,11 +35,15 @@ class FakeService:
     async def generate_reply(self, **kwargs):
         self.last_rag_context = kwargs.get("rag_context")
         self.last_patient = kwargs.get("patient")
+        self.last_current_task = kwargs.get("current_task")
+        self.last_messages = kwargs.get("messages")
         return self.last_rag_context or "direct reply"
 
     async def stream_reply(self, **kwargs):
         self.last_rag_context = kwargs.get("rag_context")
         self.last_patient = kwargs.get("patient")
+        self.last_current_task = kwargs.get("current_task")
+        self.last_messages = kwargs.get("messages")
         yield "Safe "
         yield "response."
 
@@ -202,6 +208,40 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertIn("## Retrieval Source Boundaries", self.service.last_rag_context)
         self.assertIn("## Retrieved PostgreSQL Synthetic Patient Context", self.service.last_rag_context)
         self.assertIn("## Retrieved Clinical Evidence", self.service.last_rag_context)
+
+    def test_current_task_and_conversation_history_reach_generation(self):
+        payload = _chat_payload(
+            "Based on this patient's current task, what should I do next?"
+        )
+        payload["messages"] = [
+            {"role": "user", "content": "Why is medication support important?"},
+            {"role": "assistant", "content": "It helps document safe support."},
+            {"role": "user", "content": "What should I do next?"},
+        ]
+        payload["currentTaskContext"] = {
+            "id": "task-medication",
+            "label": "Medication support",
+            "type": "medication",
+            "status": "delayed",
+            "dueAt": "09:00",
+            "detail": "Confirm the medication support outcome.",
+        }
+
+        response = self.client.post("/ai/chat", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "hybrid")
+        self.assertIsNotNone(self.service.last_patient)
+        self.assertEqual(self.service.last_current_task.id, "task-medication")
+        self.assertEqual(self.service.last_current_task.status, "delayed")
+        self.assertEqual(
+            self.service.last_messages,
+            [
+                ("user", "Why is medication support important?"),
+                ("assistant", "It helps document safe support."),
+                ("user", "What should I do next?"),
+            ],
+        )
 
     def test_hybrid_retrievals_run_concurrently(self):
         probe = OverlapProbe()

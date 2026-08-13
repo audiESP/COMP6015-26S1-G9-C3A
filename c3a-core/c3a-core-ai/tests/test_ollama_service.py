@@ -63,22 +63,56 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
 class OllamaMessageTest(unittest.TestCase):
     def test_context_and_conversation_are_preserved(self):
         messages = _build_ollama_messages(
-            [("user", "What should happen next?")],
+            [
+                ("user", "Why is this task needed?"),
+                ("assistant", "It supports safe medication care."),
+                ("user", "What should happen next?"),
+            ],
             patient=SimpleNamespace(
                 name="Jane",
                 medications=["Warfarin"],
                 allergies=["Penicillin"],
                 pastMedicalHistory="Hypertension; Falls risk",
             ),
+            current_task=SimpleNamespace(
+                id="medication",
+                label="Medication support",
+                type="medication",
+                status="delayed",
+                dueAt="09:00",
+                detail="Confirm the medication support outcome.",
+            ),
             rag_context="## Retrieved Clinical Evidence\n[Source 1] Care guide",
         )
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn("Jane", messages[0]["content"])
         self.assertIn("Warfarin", messages[0]["content"])
+        self.assertIn("## Current Priority Care Task", messages[0]["content"])
+        self.assertIn("Medication support: delayed", messages[0]["content"])
+        self.assertIn("Treat this as the current task", messages[0]["content"])
         self.assertIn("Penicillin", messages[0]["content"])
         self.assertIn("Hypertension; Falls risk", messages[0]["content"])
         self.assertIn("[Source 1]", messages[0]["content"])
+        self.assertEqual(
+            messages[1:3],
+            [
+                {"role": "user", "content": "Why is this task needed?"},
+                {"role": "assistant", "content": "It supports safe medication care."},
+            ],
+        )
         self.assertEqual(messages[-1], {"role": "user", "content": "What should happen next?"})
+
+    def test_system_prompt_defines_contextual_guidance_structure_and_limits(self):
+        messages = _build_ollama_messages(
+            [("user", "Explain the current task.")],
+            current_task=SimpleNamespace(label="Mobility check", status="pending"),
+        )
+
+        system_content = messages[0]["content"]
+        for heading in ["Current situation", "Steps", "Watch for", "Escalate when", "Sources"]:
+            self.assertIn(heading, system_content)
+        self.assertIn("only actions within the supplied worker's role", system_content)
+        self.assertIn("Do not diagnose", system_content)
 
 
 if __name__ == "__main__":

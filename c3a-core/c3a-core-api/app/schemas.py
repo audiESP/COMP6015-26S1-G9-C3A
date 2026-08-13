@@ -195,6 +195,7 @@ class ChatRequest(BaseModel):
     patientContext: Optional[PatientContext] = None
     workerContext: Optional[WorkerContext] = None
     visitContext: Optional[VisitContext] = None
+    currentTaskContext: Optional[CareTaskContext] = None
     taskContext: Optional[list[CareTaskContext]] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None

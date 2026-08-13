@@ -192,6 +192,7 @@ export interface ApiChatRequest {
   patientContext?: PatientInfo;
   workerContext?: WorkerContext;
   visitContext?: VisitContext;
+  currentTaskContext?: CareTask;
   taskContext?: CareTask[];
   eventContext?: ScenarioEvent[];
   riskContext?: RiskAlert[];

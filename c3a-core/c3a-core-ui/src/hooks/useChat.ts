@@ -40,10 +40,16 @@ export function useChat({
 
       setIsLoading(true);
       try {
-        const history = (activeSession?.messages ?? []).map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
+        const history = (activeSession?.messages ?? [])
+          .slice(-12)
+          .map((m) => ({
+            role: m.role,
+            content: m.content,
+          }));
+        const currentTask = scenarioContext
+          ? scenarioContext.tasks.find((task) => ['issue', 'delayed', 'pending'].includes(task.status))
+            ?? scenarioContext.tasks[scenarioContext.tasks.length - 1]
+          : undefined;
 
         const apiAttachments = attachments
           .filter((a) => a.base64 && a.mimeType)
@@ -56,10 +62,11 @@ export function useChat({
         let streamedReply = '';
         let assistantMessageId: string | null = null;
         await streamChatMessage({
-          messages: [{ role: 'user', content: text.trim() }],
+          messages: [...history, { role: 'user', content: text.trim() }],
           patientContext: scenarioContext?.patient ?? activeSession?.patientInfo,
           workerContext: scenarioContext?.worker,
           visitContext: scenarioContext?.visit,
+          currentTaskContext: currentTask,
           taskContext: scenarioContext?.tasks,
           eventContext: scenarioContext?.events,
           riskContext: scenarioContext?.alerts,
