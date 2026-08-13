@@ -177,6 +177,7 @@ class AiChatRequest(BaseModel):
     patientContext: Optional[PatientContext] = None
     workerContext: Optional[WorkerContext] = None
     visitContext: Optional[VisitContext] = None
+    currentTaskContext: Optional[CareTaskContext] = None
     taskContext: Optional[list[CareTaskContext]] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None
@@ -474,7 +475,12 @@ async def _prepare_chat(req: AiChatRequest) -> PreparedChat:
             status_code=422,
             detail="The configured local Llama model does not support attachments",
         )
-    initial_route = decide_route(latest_user_query, req.patientContext, req.attachments)
+    initial_route = decide_route(
+        latest_user_query,
+        req.patientContext,
+        req.attachments,
+        req.currentTaskContext,
+    )
     logger.info(
         "AI POST /ai/chat received messages=%s attachments=%s patient_context=%s route=%s route_confidence=%.2f latest_user_preview=%r",
         len(req.messages),
@@ -533,6 +539,7 @@ def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, 
         "patient": req.patientContext if prepared.effective_route.uses_db else None,
         "worker": req.workerContext,
         "visit": req.visitContext,
+        "current_task": req.currentTaskContext,
         "tasks": req.taskContext or [],
         "events": req.eventContext or [],
         "risks": req.riskContext or [],

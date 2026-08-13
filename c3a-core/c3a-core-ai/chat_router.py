@@ -164,6 +164,13 @@ WORKFLOW_ACTION_PHRASES = {
     "what to do",
 }
 
+CURRENT_TASK_HELP_PHRASES = {
+    "current task",
+    "this task",
+    "what should i do next",
+    "what do i do next",
+}
+
 AMBIGUOUS_OVERLAP_TERMS = {
     "cald",
     "care",
@@ -222,7 +229,12 @@ DATASET_INTENT_TERMS = {
 }
 
 
-def decide_route(query: str, patient_context: Any = None, attachments: Any = None) -> RouteDecision:
+def decide_route(
+    query: str,
+    patient_context: Any = None,
+    attachments: Any = None,
+    current_task_context: Any = None,
+) -> RouteDecision:
     """Return the initial retrieval route for a chat question."""
 
     if not query or not query.strip():
@@ -244,12 +256,14 @@ def decide_route(query: str, patient_context: Any = None, attachments: Any = Non
     db_signals = _db_signals(words, lowered)
     guideline_signals = _guideline_signals(words, lowered)
     workflow_signals = _workflow_signals(words, lowered)
+    current_task_signals = _current_task_signals(lowered, current_task_context)
     overlap_signals = _overlap_signals(words, lowered)
     dataset_signals = _dataset_signals(words, lowered)
     attachment_signals = _attachment_signals(attachments)
     signals.extend(db_signals)
     signals.extend(guideline_signals)
     signals.extend(workflow_signals)
+    signals.extend(current_task_signals)
     signals.extend(overlap_signals)
     signals.extend(dataset_signals)
     signals.extend(attachment_signals)
@@ -259,8 +273,15 @@ def decide_route(query: str, patient_context: Any = None, attachments: Any = Non
     has_db_fact = bool(db_signals or dataset_signals)
     has_guideline = bool(guideline_signals)
     has_workflow = bool(workflow_signals)
+    has_current_task_help = bool(current_task_signals)
     has_overlap = bool(overlap_signals)
-    has_medical = bool(words & GENERIC_MEDICAL_TERMS) or has_db_fact or has_guideline or has_overlap
+    has_medical = (
+        bool(words & GENERIC_MEDICAL_TERMS)
+        or has_db_fact
+        or has_guideline
+        or has_overlap
+        or has_current_task_help
+    )
 
     if not has_medical and not attachment_signals:
         return _decision(
@@ -268,6 +289,22 @@ def decide_route(query: str, patient_context: Any = None, attachments: Any = Non
             0.9,
             "No patient, database, guideline, or clinical-care signal was found.",
             signals or ["no_retrieval_signal"],
+        )
+
+    if has_current_task_help and _has_linked_patient(patient_context):
+        return _decision(
+            "hybrid",
+            0.9,
+            "Current-task guidance should combine the linked patient and care evidence.",
+            signals,
+        )
+
+    if has_current_task_help:
+        return _decision(
+            "rag_only",
+            0.84,
+            "Current-task guidance needs care-practice evidence.",
+            signals,
         )
 
     if has_patient_anchor and has_db_fact and (has_guideline or has_workflow):
@@ -440,6 +477,14 @@ def _workflow_signals(words: set[str], lowered: str) -> list[str]:
     return signals
 
 
+def _current_task_signals(lowered: str, current_task_context: Any) -> list[str]:
+    if current_task_context is None:
+        return []
+    if any(phrase in lowered for phrase in CURRENT_TASK_HELP_PHRASES):
+        return ["current_task_help", "current_task_context"]
+    return []
+
+
 def _overlap_signals(words: set[str], lowered: str) -> list[str]:
     signals = []
     if words & AMBIGUOUS_OVERLAP_TERMS:
@@ -479,6 +524,13 @@ def _normalise_uuid(value: Any) -> str | None:
         return str(UUID(value.strip()))
     except ValueError:
         return None
+
+
+def _has_linked_patient(patient_context: Any) -> bool:
+    return bool(
+        _normalise_uuid(getattr(patient_context, "id", None))
+        or getattr(patient_context, "name", None)
+    )
 
 
 def _dedupe(items: list[str]) -> list[str]:

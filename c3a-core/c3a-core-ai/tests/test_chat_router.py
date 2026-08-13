@@ -8,6 +8,12 @@ PATIENT = SimpleNamespace(
     id="11111111-1111-1111-1111-111111111111",
     name="Jane Smith",
 )
+CURRENT_TASK = SimpleNamespace(
+    id="task-medication",
+    label="Medication support",
+    type="medication",
+    status="delayed",
+)
 
 
 class ChatRouterTest(unittest.TestCase):
@@ -65,6 +71,28 @@ class ChatRouterTest(unittest.TestCase):
         self.assertEqual(decision.mode, "direct_ai")
         self.assertFalse(decision.uses_db)
         self.assertFalse(decision.uses_rag)
+
+    def test_current_task_follow_up_with_patient_routes_to_hybrid(self):
+        decision = decide_route(
+            "What should I do next?",
+            PATIENT,
+            current_task_context=CURRENT_TASK,
+        )
+
+        self.assertEqual(decision.mode, "hybrid")
+        self.assertTrue(decision.uses_db)
+        self.assertTrue(decision.uses_rag)
+        self.assertIn("current_task_help", decision.matched_signals)
+
+    def test_current_task_explanation_without_patient_routes_to_rag(self):
+        decision = decide_route(
+            "Explain the current task and its basic steps.",
+            current_task_context=CURRENT_TASK,
+        )
+
+        self.assertEqual(decision.mode, "rag_only")
+        self.assertFalse(decision.uses_db)
+        self.assertTrue(decision.uses_rag)
 
 
 if __name__ == "__main__":

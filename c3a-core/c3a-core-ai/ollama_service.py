@@ -27,6 +27,10 @@ For care-worker questions, give practical aged-care actions and escalation or
 red-flag advice appropriate to the worker's role. Tailor guidance to the current
 visit status, task list, recent events, active risks, patient mobility, CALD
 needs, and the health worker's role.
+When the user asks for help with the current task, answer under these short
+headings: Current situation, Steps, Watch for, Escalate when, and Sources. Give
+only actions within the supplied worker's role. In Sources, cite supplied
+[Source N] evidence or state that no project guideline source was retrieved.
 Treat location data as visit workflow context only. If a location check is
 outside the expected area, advise address confirmation and documentation; do
 not accuse the worker or make surveillance conclusions.
@@ -118,6 +122,7 @@ class OllamaService:
         patient=None,
         worker=None,
         visit=None,
+        current_task=None,
         tasks=None,
         events=None,
         risks=None,
@@ -131,6 +136,7 @@ class OllamaService:
                 patient=patient,
                 worker=worker,
                 visit=visit,
+                current_task=current_task,
                 tasks=tasks,
                 events=events,
                 risks=risks,
@@ -150,6 +156,7 @@ class OllamaService:
         patient=None,
         worker=None,
         visit=None,
+        current_task=None,
         tasks=None,
         events=None,
         risks=None,
@@ -172,6 +179,7 @@ class OllamaService:
             patient=patient,
             worker=worker,
             visit=visit,
+            current_task=current_task,
             tasks=tasks or [],
             events=events or [],
             risks=risks or [],
@@ -233,6 +241,7 @@ def _build_ollama_messages(
     patient=None,
     worker=None,
     visit=None,
+    current_task=None,
     tasks=None,
     events=None,
     risks=None,
@@ -244,7 +253,7 @@ def _build_ollama_messages(
     if patient_context:
         context_parts.append(patient_context)
     workflow_context = _build_workflow_context(
-        worker, visit, tasks or [], events or [], risks or []
+        worker, visit, current_task, tasks or [], events or [], risks or []
     )
     if workflow_context:
         context_parts.append(workflow_context)
@@ -299,7 +308,14 @@ def _build_patient_context(patient) -> str:
     return "\n".join(parts)
 
 
-def _build_workflow_context(worker=None, visit=None, tasks=None, events=None, risks=None) -> str:
+def _build_workflow_context(
+    worker=None,
+    visit=None,
+    current_task=None,
+    tasks=None,
+    events=None,
+    risks=None,
+) -> str:
     parts: list[str] = []
     if worker:
         parts.append("## Current Health Worker")
@@ -343,6 +359,21 @@ def _build_workflow_context(worker=None, visit=None, tasks=None, events=None, ri
                 if note:
                     line += f"; note: {note}"
                 parts.append(line)
+    if current_task:
+        parts.append("## Current Priority Care Task")
+        label = getattr(current_task, "label", None) or getattr(current_task, "id", "Task")
+        line = f"- {label}: {getattr(current_task, 'status', 'unknown')}"
+        task_type = getattr(current_task, "type", None)
+        if task_type:
+            line += f"; type: {task_type}"
+        due_at = getattr(current_task, "dueAt", None)
+        if due_at:
+            line += f"; due {due_at}"
+        detail = getattr(current_task, "detail", None)
+        if detail:
+            line += f"; {detail}"
+        parts.append(line)
+        parts.append("Treat this as the current task when the user says 'this task' or asks what to do next.")
     if tasks:
         parts.append("## Current Care Tasks")
         for task in tasks[:12]:

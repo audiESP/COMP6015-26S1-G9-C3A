@@ -338,6 +338,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               messages={messages}
               isLoading={chatLoading}
               contextLabel={`${scenario.patient.name} · ${stepLabels[scenario.lifecycleStep]} · ${currentTask.label}`}
+              onSuggestedQuestion={handleSend}
               onOpenHistory={() => setHistoryOpen(true)}
               onEditPatient={() => setPatientModalOpen(true)}
             />
@@ -690,6 +691,7 @@ function AssistantTab({
   messages,
   isLoading,
   contextLabel,
+  onSuggestedQuestion,
   onOpenHistory,
   onEditPatient,
 }: {
@@ -697,6 +699,7 @@ function AssistantTab({
   messages: Message[];
   isLoading: boolean;
   contextLabel: string;
+  onSuggestedQuestion: (text: string, attachments: Attachment[]) => void;
   onOpenHistory: () => void;
   onEditPatient: () => void;
 }) {
@@ -712,6 +715,22 @@ function AssistantTab({
           </TouchableOpacity>
           <TouchableOpacity style={styles.smallButton} onPress={onEditPatient} activeOpacity={0.75}>
             <Text style={styles.smallButtonText}>Patient</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.suggestedQuestionRow}>
+          <TouchableOpacity
+            style={styles.suggestedQuestionButton}
+            onPress={() => onSuggestedQuestion('Explain the current care task and its basic steps.', [])}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.suggestedQuestionText}>Explain current task</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.suggestedQuestionButton}
+            onPress={() => onSuggestedQuestion('Based on the current patient, visit stage, task, and active risks, what should I do next?', [])}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.suggestedQuestionText}>What should I do next?</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1239,6 +1258,9 @@ const styles = StyleSheet.create({
   toolbarButtons: { flexDirection: 'row', gap: 8 },
   smallButton: { flex: 1, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D9E2DE', borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
   smallButtonText: { color: '#2E6F73', fontWeight: '800' },
+  suggestedQuestionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  suggestedQuestionButton: { flexGrow: 1, flexBasis: 150, minHeight: 40, backgroundColor: '#2E6F73', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
+  suggestedQuestionText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', textAlign: 'center' },
   chatPanel: { backgroundColor: '#EFF5F2', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', paddingVertical: 8, minHeight: 260 },
   emptyChat: { padding: 22, alignItems: 'center' },
   emptyChatTitle: { color: '#16231E', fontSize: 16, fontWeight: '800' },
