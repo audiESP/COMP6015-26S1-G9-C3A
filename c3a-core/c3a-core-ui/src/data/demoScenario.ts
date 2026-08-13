@@ -34,6 +34,7 @@ export const demoPatient: PatientInfo = {
   careRiskFlags: ['falls risk', 'language barrier', 'polypharmacy review'],
   allergies: ['Mold - mild cutaneous hypersensitivity'],
   medications: ['Lunchtime medication assistance required'],
+  pastMedicalHistory: 'Type 2 diabetes; recurrent falls; chronic hypertension.',
   notes:
     'Synthetic patient from Neon c3a_synthea tables, paired with CALD profile for scenario testing.',
 };
@@ -55,6 +56,7 @@ const florPatient: PatientInfo = {
     'Use plain language, confirm understanding with teach-back, involve adult child for complex care decisions.',
   careRiskFlags: ['polypharmacy review', 'language barrier', 'nutrition monitoring'],
   medications: ['Afternoon medication prompt'],
+  pastMedicalHistory: 'Osteoarthritis; chronic pain; previous hospital admissions for dizziness.',
 };
 
 const tyeshaPatient: PatientInfo = {
@@ -74,6 +76,7 @@ const tyeshaPatient: PatientInfo = {
     'Offer same-gender care worker for personal care when possible; check prayer-time preferences.',
   careRiskFlags: ['falls risk', 'language barrier', 'polypharmacy review'],
   medications: ['Evening medication prompt'],
+  pastMedicalHistory: 'Atrial fibrillation; recent discharge after dehydration-related admission.',
 };
 
 type DemoScenarioSeed = {

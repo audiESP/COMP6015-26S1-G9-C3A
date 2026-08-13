@@ -30,6 +30,7 @@ class PatientContext(BaseModel):
     careRiskFlags: Optional[list[str]] = None
     allergies: Optional[list[str]] = None
     medications: Optional[list[str]] = None
+    pastMedicalHistory: Optional[str] = None
 
 
 class WorkerContext(BaseModel):

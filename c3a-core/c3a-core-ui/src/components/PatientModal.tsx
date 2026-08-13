@@ -41,6 +41,7 @@ export const PatientModal: React.FC<Props> = ({
       medicalRecordNumber: form.medicalRecordNumber,
       diagnosis: form.diagnosis,
       notes: form.notes,
+      pastMedicalHistory: form.pastMedicalHistory,
     });
     onClose();
   };
@@ -92,6 +93,7 @@ export const PatientModal: React.FC<Props> = ({
             {field('gender', t('patient.gender'), 'Male / Female')}
             {field('medicalRecordNumber', t('patient.mrn'), 'MRN-000123')}
             {field('diagnosis', t('patient.diagnosis'), 'e.g. Hypertension')}
+            {field('pastMedicalHistory', 'Past medical history', 'Type 2 diabetes; recurrent falls', true)}
             {field('notes', t('patient.notes'), 'Additional notes...', true)}
           </ScrollView>
 

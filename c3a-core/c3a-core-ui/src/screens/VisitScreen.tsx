@@ -882,6 +882,7 @@ function CareDetailsPanel({
         <SummaryLine label="Communication" value={patient.communicationNotes ?? 'Not recorded'} />
         <SummaryLine label="Dietary" value={patient.dietaryNotes ?? 'Not recorded'} />
         <SummaryLine label="Diagnosis" value={patient.diagnosis ?? 'Not recorded'} />
+        <SummaryLine label="Past medical history" value={patient.pastMedicalHistory ?? 'Not recorded'} />
         <SummaryLine label="Culture" value={patient.culturalBackground ?? 'Not recorded'} />
         <SummaryLine label="Cognition" value={patient.cognitiveStatus ?? 'Not recorded'} />
         <SummaryLine label="Worker" value={worker} />

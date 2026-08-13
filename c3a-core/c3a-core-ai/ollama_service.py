@@ -295,12 +295,16 @@ def _build_patient_context(patient) -> str:
             parts.append(f"- {label}: {value}")
     for label, attribute in [
         ("Care risk flags", "careRiskFlags"),
+        ("Past medical history", "pastMedicalHistory"),
         ("Allergies", "allergies"),
         ("Medications", "medications"),
     ]:
         value = getattr(patient, attribute, None)
         if value:
-            parts.append(f"- {label}: {', '.join(value)}")
+            if isinstance(value, str):
+                parts.append(f"- {label}: {value}")
+            else:
+                parts.append(f"- {label}: {', '.join(str(item) for item in value)}")
     return "\n".join(parts)
 
 

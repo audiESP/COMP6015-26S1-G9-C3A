@@ -64,12 +64,19 @@ class OllamaMessageTest(unittest.TestCase):
     def test_context_and_conversation_are_preserved(self):
         messages = _build_ollama_messages(
             [("user", "What should happen next?")],
-            patient=SimpleNamespace(name="Jane", medications=["Warfarin"]),
+            patient=SimpleNamespace(
+                name="Jane",
+                medications=["Warfarin"],
+                allergies=["Penicillin"],
+                pastMedicalHistory="Hypertension; Falls risk",
+            ),
             rag_context="## Retrieved Clinical Evidence\n[Source 1] Care guide",
         )
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn("Jane", messages[0]["content"])
         self.assertIn("Warfarin", messages[0]["content"])
+        self.assertIn("Penicillin", messages[0]["content"])
+        self.assertIn("Hypertension; Falls risk", messages[0]["content"])
         self.assertIn("[Source 1]", messages[0]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "What should happen next?"})
 

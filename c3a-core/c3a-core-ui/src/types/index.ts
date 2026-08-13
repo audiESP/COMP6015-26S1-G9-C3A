@@ -35,6 +35,7 @@ export interface PatientInfo {
   careRiskFlags?: string[];
   allergies?: string[];
   medications?: string[];
+  pastMedicalHistory?: string;
 }
 
 export interface ChatSession {
