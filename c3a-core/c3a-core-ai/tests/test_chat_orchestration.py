@@ -19,6 +19,7 @@ os.environ.setdefault("C3A_AI_ENABLED", "false")
 import main  # noqa: E402
 from db_context import DbContextResult  # noqa: E402
 from rag.citations import RetrievedChunk  # noqa: E402
+import ollama_service  # noqa: E402
 
 
 class FakeService:
@@ -216,6 +217,44 @@ class ChatOrchestrationTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(probe.overlapped)
+
+    def test_prompt_includes_active_task_and_checklist_statuses(self):
+        worker = SimpleNamespace(name="Iris Ng", role="care_worker", shift="AM")
+        visit = SimpleNamespace(
+            id="visit-42",
+            scheduledAt="2026-05-12T09:00:00Z",
+            arrivedAt="2026-05-12T09:20:00Z",
+            location="Home visit",
+            status="in_progress",
+            plannedAddress="45 Orchard Way",
+        )
+        tasks = [
+            SimpleNamespace(id="t-1", label="Assess patient mobility", status="pending", detail="Patient is unsteady."),
+            SimpleNamespace(id="t-2", label="Document observations", status="completed", detail="Completed at 09:45."),
+        ]
+        checklist = [
+            SimpleNamespace(id="c-1", label="Check for dizziness", completed=False),
+            SimpleNamespace(id="c-2", label="Confirm fall risk precautions", completed=True),
+        ]
+
+        rendered = ollama_service._build_ollama_messages(
+            messages=[("user", "What should I do next?")],
+            worker=worker,
+            visit=visit,
+            tasks=tasks,
+            events=[],
+            risks=[],
+            checklist=checklist,
+        )
+
+        prompt = "\n".join(message["content"] for message in rendered)
+        self.assertIn("## Current Care Tasks", prompt)
+        self.assertIn("Assess patient mobility", prompt)
+        self.assertIn("## Incident Checklist", prompt)
+        self.assertIn("Check for dizziness", prompt)
+        self.assertIn("incomplete", prompt.lower())
+        self.assertIn("Confirm fall risk precautions", prompt)
+        self.assertIn("complete", prompt.lower())
 
     def test_rag_only_stream_returns_incremental_tokens_and_sources(self):
         with self.client.stream(

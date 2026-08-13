@@ -194,6 +194,7 @@ export interface ApiChatRequest {
   taskContext?: CareTask[];
   eventContext?: ScenarioEvent[];
   riskContext?: RiskAlert[];
+  checklistContext?: IncidentChecklistItem[];
   attachments?: { type: string; base64: string; mimeType: string }[];
 }
 

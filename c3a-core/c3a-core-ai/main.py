@@ -166,6 +166,12 @@ class RiskContext(BaseModel):
     source: Optional[str] = None
 
 
+class IncidentChecklistItem(BaseModel):
+    id: Optional[str] = None
+    label: Optional[str] = None
+    completed: bool = False
+
+
 class AttachmentData(BaseModel):
     type: str
     base64: str
@@ -180,6 +186,7 @@ class AiChatRequest(BaseModel):
     taskContext: Optional[list[CareTaskContext]] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None
+    checklistContext: Optional[list[IncidentChecklistItem]] = None
     attachments: Optional[list[AttachmentData]] = None
 
 
@@ -536,6 +543,7 @@ def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, 
         "tasks": req.taskContext or [],
         "events": req.eventContext or [],
         "risks": req.riskContext or [],
+        "checklist": req.checklistContext or [],
         "attachments": req.attachments or [],
         "rag_context": prepared.combined_context,
     }

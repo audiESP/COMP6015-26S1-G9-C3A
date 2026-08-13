@@ -197,6 +197,7 @@ class ChatRequest(BaseModel):
     taskContext: Optional[list[CareTaskContext]] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None
+    checklistContext: Optional[list[IncidentChecklistItem]] = None
     attachments: Optional[list[AttachmentData]] = None
 
 
