@@ -875,23 +875,6 @@ function CareDetailsPanel({
         <SummaryLine label="Check-out" value={visit.checkOut ? locationSnapshotSummary(visit.checkOut) : 'Not recorded'} />
       </View>
 
-      <SectionHeader title="Care checklist" detail={visitStarted ? 'Tap Done or Problem' : 'Start visit first'} />
-      <View style={styles.taskList}>
-        {tasks.map((task) => (
-          <TaskRow
-            key={task.id}
-            task={task}
-            isSelected={selectedTaskId === task.id}
-            disabled={!visitStarted || disabled}
-            issueMenuOpen={openIssueTaskId === task.id}
-            onSelect={() => onSelectTask(task)}
-            onDone={() => onToggleTask(task)}
-            onToggleIssue={() => onToggleTaskIssueMenu(task.id)}
-            onIssue={(type) => onTaskIssue(task.id, type)}
-          />
-        ))}
-      </View>
-
       <SectionHeader title="What to keep in mind" detail="Patient needs" />
       <View style={styles.contextPanel}>
         <SummaryLine label="Language" value={`${patient.preferredLanguage ?? 'Unknown'}${patient.interpreterRequired ? ' · interpreter recommended' : ''}`} />
