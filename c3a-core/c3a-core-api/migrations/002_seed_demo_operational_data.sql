@@ -138,8 +138,8 @@ from (
         -31.9766,
         115.9007,
         150,
-        'scheduled',
-        'pre_visit',
+        'completed',
+        'closed',
         now()
     ),
     (
@@ -205,55 +205,99 @@ set shift_id = excluded.shift_id,
     planned_lat = excluded.planned_lat,
     planned_lon = excluded.planned_lon,
     location_threshold_meters = excluded.location_threshold_meters,
+    status = excluded.status,
+    lifecycle_step = excluded.lifecycle_step,
+    arrived_at = case
+        when excluded.status = 'completed' then coalesce(c3a_app_visits.arrived_at, excluded.scheduled_at)
+        else null
+    end,
+    completed_at = case
+        when excluded.status = 'completed' then coalesce(c3a_app_visits.completed_at, excluded.scheduled_at + interval '1 hour')
+        else null
+    end,
     updated_at = now();
+
+update c3a_app_visits
+set arrived_at = case
+        when status = 'completed' then coalesce(arrived_at, scheduled_at)
+        else null
+    end,
+    completed_at = case
+        when status = 'completed' then coalesce(completed_at, scheduled_at + interval '1 hour')
+        else null
+    end,
+    updated_at = now()
+where external_key in ('visit-home-1200', 'visit-home-1330', 'visit-home-1500');
 
 with task_seed as (
     select *
     from (
         values
-        ('visit-home-1200', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T12:00:00+08:00'::timestamptz, 'Confirm address, introduce visit purpose, check preferred communication.', 1),
-        ('visit-home-1200', 'meal', 'Support lunch routine', 'meal', '2026-05-12T12:10:00+08:00'::timestamptz, 'Offer rice-based meal option and check appetite.', 2),
-        ('visit-home-1200', 'medication', 'Assist lunchtime medication', 'medication', '2026-05-12T12:20:00+08:00'::timestamptz, 'Confirm medication prompt and document if delayed or refused.', 3),
-        ('visit-home-1200', 'wellbeing', 'Wellbeing and comfort check', 'wellbeing', '2026-05-12T12:30:00+08:00'::timestamptz, 'Ask about pain, dizziness, hydration, and unusual symptoms.', 4),
-        ('visit-home-1200', 'mobility', 'Observe mobility and falls risk', 'mobility', '2026-05-12T12:35:00+08:00'::timestamptz, 'Check walker use and whether gait is steady today.', 5),
-        ('visit-home-1200', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T12:45:00+08:00'::timestamptz, 'Record completed tasks, issues, escalation, and follow-up needs.', 6),
-        ('visit-home-1330', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T13:30:00+08:00'::timestamptz, 'Confirm interpreter preference and orient the patient to the visit.', 1),
-        ('visit-home-1330', 'wellbeing', 'Wellbeing and nutrition check', 'wellbeing', '2026-05-12T13:40:00+08:00'::timestamptz, 'Check comfort, hydration, appetite, and orientation.', 2),
-        ('visit-home-1330', 'mobility', 'Transfer assistance observation', 'mobility', '2026-05-12T13:50:00+08:00'::timestamptz, 'Observe transfer support needs and document changes.', 3),
-        ('visit-home-1330', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T14:05:00+08:00'::timestamptz, 'Record nutrition, transfer support, and family communication needs.', 4),
-        ('visit-home-1500', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T15:00:00+08:00'::timestamptz, 'Check communication preferences before personal-care support.', 1),
-        ('visit-home-1500', 'wellbeing', 'Orientation and comfort check', 'wellbeing', '2026-05-12T15:10:00+08:00'::timestamptz, 'Confirm comfort, pain, and any confusion today.', 2),
-        ('visit-home-1500', 'mobility', 'Mobility and personal-care support', 'mobility', '2026-05-12T15:20:00+08:00'::timestamptz, 'Observe steadiness and respect same-gender care preference where possible.', 3),
-        ('visit-home-1500', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T15:40:00+08:00'::timestamptz, 'Record mobility, preferences, and any escalation.', 4)
-    ) as seed(external_key, task_key, label, type, due_at, detail, sort_order)
+        ('visit-home-1200', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T12:00:00+08:00'::timestamptz, 'Confirm address, introduce visit purpose, check preferred communication.', 1, 'completed'),
+        ('visit-home-1200', 'meal', 'Support lunch routine', 'meal', '2026-05-12T12:10:00+08:00'::timestamptz, 'Offer rice-based meal option and check appetite.', 2, 'completed'),
+        ('visit-home-1200', 'medication', 'Assist lunchtime medication', 'medication', '2026-05-12T12:20:00+08:00'::timestamptz, 'Confirm medication prompt and document if delayed or refused.', 3, 'completed'),
+        ('visit-home-1200', 'wellbeing', 'Wellbeing and comfort check', 'wellbeing', '2026-05-12T12:30:00+08:00'::timestamptz, 'Ask about pain, dizziness, hydration, and unusual symptoms.', 4, 'completed'),
+        ('visit-home-1200', 'mobility', 'Observe mobility and falls risk', 'mobility', '2026-05-12T12:35:00+08:00'::timestamptz, 'Check walker use and whether gait is steady today.', 5, 'completed'),
+        ('visit-home-1200', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T12:45:00+08:00'::timestamptz, 'Record completed tasks, issues, escalation, and follow-up needs.', 6, 'completed'),
+        ('visit-home-1330', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T13:30:00+08:00'::timestamptz, 'Confirm interpreter preference and orient the patient to the visit.', 1, 'pending'),
+        ('visit-home-1330', 'wellbeing', 'Wellbeing and nutrition check', 'wellbeing', '2026-05-12T13:40:00+08:00'::timestamptz, 'Check comfort, hydration, appetite, and orientation.', 2, 'pending'),
+        ('visit-home-1330', 'mobility', 'Transfer assistance observation', 'mobility', '2026-05-12T13:50:00+08:00'::timestamptz, 'Observe transfer support needs and document changes.', 3, 'pending'),
+        ('visit-home-1330', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T14:05:00+08:00'::timestamptz, 'Record nutrition, transfer support, and family communication needs.', 4, 'pending'),
+        ('visit-home-1500', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T15:00:00+08:00'::timestamptz, 'Check communication preferences before personal-care support.', 1, 'pending'),
+        ('visit-home-1500', 'wellbeing', 'Orientation and comfort check', 'wellbeing', '2026-05-12T15:10:00+08:00'::timestamptz, 'Confirm comfort, pain, and any confusion today.', 2, 'pending'),
+        ('visit-home-1500', 'mobility', 'Mobility and personal-care support', 'mobility', '2026-05-12T15:20:00+08:00'::timestamptz, 'Observe steadiness and respect same-gender care preference where possible.', 3, 'pending'),
+        ('visit-home-1500', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T15:40:00+08:00'::timestamptz, 'Record mobility, preferences, and any escalation.', 4, 'pending')
+    ) as seed(external_key, task_key, label, type, due_at, detail, sort_order, status)
 )
 insert into c3a_app_care_tasks (
     visit_id,
     task_key,
     label,
     type,
+    status,
     due_at,
     detail,
     sort_order,
+    completed_at,
     updated_at
 )
 select v.id,
        s.task_key,
        s.label,
        s.type,
+       s.status,
        s.due_at,
        s.detail,
        s.sort_order,
+       case when s.status = 'completed' then s.due_at else null end,
        now()
 from task_seed s
 join c3a_app_visits v on v.external_key = s.external_key
 on conflict (visit_id, task_key) do update
 set label = excluded.label,
     type = excluded.type,
+    status = excluded.status,
     due_at = excluded.due_at,
     detail = excluded.detail,
     sort_order = excluded.sort_order,
+    completed_at = excluded.completed_at,
+    status_note = null,
     updated_at = now();
+
+delete from c3a_app_visit_events
+where visit_id in (
+    select id from c3a_app_visits where external_key in ('visit-home-1330', 'visit-home-1500')
+);
+
+delete from c3a_app_location_snapshots
+where visit_id in (
+    select id from c3a_app_visits where external_key in ('visit-home-1330', 'visit-home-1500')
+);
+
+delete from c3a_app_risk_alerts
+where visit_id in (
+    select id from c3a_app_visits where external_key in ('visit-home-1330', 'visit-home-1500')
+);
 
 with alert_seed as (
     select *

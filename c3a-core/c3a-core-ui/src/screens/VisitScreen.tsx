@@ -9,6 +9,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -20,12 +21,13 @@ import { HistorySidebar } from '../components/HistorySidebar';
 import { PatientModal } from '../components/PatientModal';
 import { useChat } from '../hooks/useChat';
 import '../i18n';
-import { setApiBaseUrl } from '../services/api';
+import { generateVisitReport, setApiBaseUrl } from '../services/api';
 import { useChatStore } from '../store/chatStore';
 import { useScenarioStore } from '../store/scenarioStore';
 import {
   Attachment,
   CareTask,
+  CareOutcomeFormAnswers,
   LocationSnapshot,
   Message,
   PatientInfo,
@@ -46,6 +48,84 @@ type TaskIssueType = 'cannot_complete' | 'patient_declined' | 'safety_concern';
 const sections: { id: VisitSection; label: string }[] = [
   { id: 'assistant', label: 'Assistant' },
   { id: 'care', label: 'Care Plan' },
+];
+
+const emptyCareOutcomeForm: CareOutcomeFormAnswers = {
+  overallCondition: '',
+  conditionChanged: '',
+  conditionChangeNotes: '',
+  vitalsRequired: '',
+  vitals: {
+    bloodPressureSystolic: '',
+    bloodPressureDiastolic: '',
+    heartRate: '',
+    temperature: '',
+    oxygenSaturation: '',
+    respiratoryRate: '',
+    bloodGlucose: '',
+    weight: '',
+  },
+  vitalsConcern: '',
+  vitalsConcernNotes: '',
+  tasksCompleted: '',
+  incompleteReasons: [],
+  incompleteOther: '',
+  taskNotes: '',
+  medicationRequired: '',
+  medicationStatus: '',
+  medicationConcern: '',
+  medicationConcernNotes: '',
+  wellbeingConcerns: [],
+  wellbeingOther: '',
+  observationNotes: '',
+  followUpRequired: '',
+  followUpDetails: '',
+  overallOutcome: '',
+  finalComments: '',
+  confirmedAccurate: false,
+};
+
+function createEmptyCareOutcomeForm(): CareOutcomeFormAnswers {
+  return { ...emptyCareOutcomeForm, vitals: { ...emptyCareOutcomeForm.vitals }, incompleteReasons: [], wellbeingConcerns: [] };
+}
+
+const overallConditionOptions = ['Stable', 'Improved', 'No significant change', 'Deteriorated', 'Unable to assess'];
+const yesNoOptions = ['No', 'Yes'];
+const vitalsRequiredOptions = ['Yes', 'No', 'Not required for this visit'];
+const vitalsConcernOptions = ['No', 'Yes', 'Unsure'];
+const tasksCompletedOptions = ['Yes', 'Partially completed', 'No'];
+const incompleteReasonOptions = [
+  'Patient declined',
+  'Patient unavailable',
+  'Task was no longer required',
+  'Safety concern',
+  'Insufficient time',
+  'Required equipment/resources unavailable',
+];
+const medicationStatusOptions = ['Completed', 'Delayed', 'Declined', 'Unavailable', 'Unable to confirm'];
+const wellbeingConcernOptions = [
+  'No new concerns',
+  'Pain or discomfort',
+  'Mobility difficulty',
+  'Eating or drinking concern',
+  'Behaviour or mood change',
+  'Skin or wound concern',
+  'Breathing difficulty',
+  'Confusion or cognitive change',
+];
+const followUpOptions = [
+  'No follow-up required',
+  'Routine follow-up required',
+  'Supervisor review required',
+  'Nurse/clinical review required',
+  'Urgent escalation required',
+];
+const overallOutcomeOptions = [
+  'Visit completed successfully',
+  'Visit completed with minor issues',
+  'Visit completed with concerns requiring follow-up',
+  'Visit could not be fully completed',
+  'Visit ended early',
 ];
 
 const statusLabels: Record<string, string> = {
@@ -80,6 +160,11 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [patientModalOpen, setPatientModalOpen] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [finishFormOpen, setFinishFormOpen] = useState(false);
+  const [careOutcomeForm, setCareOutcomeForm] = useState<CareOutcomeFormAnswers>(() => createEmptyCareOutcomeForm());
+  const [visitReport, setVisitReport] = useState('');
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
 
   const {
     scenario,
@@ -137,10 +222,10 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   }, [currentTask, scenario.tasks, selectedTaskId]);
   const selectedTask = scenario.tasks.find((task) => task.id === selectedTaskId) ?? currentTask;
   const openTasks = scenario.tasks.filter((task) => task.status !== 'completed');
-  const pendingTasks = scenario.tasks.filter((task) => task.status === 'pending');
-  const pendingTaskCount = pendingTasks.length;
+  const incompleteRequiredTasks = scenario.tasks.filter((task) => task.status !== 'completed');
+  const incompleteRequiredTaskCount = incompleteRequiredTasks.length;
   const isCompleted = scenario.visit.status === 'completed' || scenario.lifecycleStep === 'closed';
-  const canFinishVisit = visitStarted && pendingTaskCount === 0 && !isCompleted && !workflowSaving;
+  const canFinishVisit = visitStarted && incompleteRequiredTaskCount === 0 && !isCompleted && !workflowSaving;
   const nextStep = getNextStepCopy(scenario.lifecycleStep, scenario.visit.status, currentTask, priorityAlert);
   const visitsCompleted = visitQueue.filter(
     (visit) => visit.status === 'completed' && visit.id !== scenario.visit.id,
@@ -160,6 +245,13 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     const sessionId = ensureActiveSession();
     linkPatient(sessionId, scenario.patient);
   }, [ensureActiveSession, linkPatient, scenario.patient]);
+
+  useEffect(() => {
+    setCareOutcomeForm(createEmptyCareOutcomeForm());
+    setVisitReport('');
+    setReportError(null);
+    setFinishFormOpen(false);
+  }, [scenario.visit.id]);
 
   useEffect(() => {
     if (activeSection === 'assistant' && activeSession?.messages.length) {
@@ -218,13 +310,44 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     setActiveSection('care');
   }, [isCompleted, requestLocationCheckIn, scenario.visit.checkIn, startVisit, workflowSaving]);
 
+  const handleOpenFinishVisitForm = useCallback(() => {
+    if (isCompleted || workflowSaving || incompleteRequiredTaskCount > 0) return;
+    setFinishFormOpen(true);
+  }, [incompleteRequiredTaskCount, isCompleted, workflowSaving]);
+
+  const handleGenerateVisitReport = useCallback(async () => {
+    if (!isCareOutcomeFormComplete(careOutcomeForm) || reportGenerating) return;
+    setReportGenerating(true);
+    setReportError(null);
+    try {
+      const response = await generateVisitReport(scenario.visit.id, {
+        patientContext: scenario.patient,
+        workerContext: scenario.worker,
+        visitContext: scenario.visit,
+        taskContext: scenario.tasks,
+        eventContext: scenario.events,
+        riskContext: scenario.alerts,
+        careOutcomeForm,
+      });
+      setVisitReport(response.report);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Failed to generate visit report.');
+    } finally {
+      setReportGenerating(false);
+    }
+  }, [careOutcomeForm, reportGenerating, scenario]);
+
   const handleFinishVisitWithCheckOut = useCallback(async () => {
-    if (isCompleted || workflowSaving || pendingTaskCount > 0) return;
+    if (isCompleted || workflowSaving || incompleteRequiredTaskCount > 0 || !visitReport) return;
     const checkOut = scenario.visit.checkOut
       ? undefined
       : await requestLocationCheckOut('Departure recorded when finishing the visit.');
     await completeVisit(checkOut);
-  }, [completeVisit, isCompleted, pendingTaskCount, requestLocationCheckOut, scenario.visit.checkOut, workflowSaving]);
+    setFinishFormOpen(false);
+    setCareOutcomeForm(createEmptyCareOutcomeForm());
+    setVisitReport('');
+    setReportError(null);
+  }, [completeVisit, incompleteRequiredTaskCount, isCompleted, requestLocationCheckOut, scenario.visit.checkOut, visitReport, workflowSaving]);
 
   const handleTaskIssue = async (taskId: string, type: TaskIssueType) => {
     if (workflowSaving) return;
@@ -322,7 +445,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             currentTask={selectedTask ?? currentTask}
             tasks={scenario.tasks}
             openTaskCount={openTasks.length}
-            pendingTaskCount={pendingTaskCount}
+            incompleteRequiredTaskCount={incompleteRequiredTaskCount}
             canFinish={canFinishVisit}
             visit={scenario.visit}
             disabled={workflowSaving}
@@ -334,7 +457,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             onToggleIssueActions={() => setIssueActionsOpen((value) => !value)}
             onIssue={handleIssue}
             onAskAi={handleAskAi}
-            onCompleteVisit={handleFinishVisitWithCheckOut}
+            onCompleteVisit={handleOpenFinishVisitForm}
             onNextPatient={handleNextPatient}
             onShiftSummary={() => setShiftSummaryOpen((value) => !value)}
           />
@@ -451,9 +574,309 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
         onSave={handlePatientSave}
         onClose={() => setPatientModalOpen(false)}
       />
+
+      <FinishVisitFormModal
+        visible={finishFormOpen}
+        form={careOutcomeForm}
+        report={visitReport}
+        reportError={reportError}
+        isGenerating={reportGenerating}
+        isSaving={workflowSaving}
+        canGenerate={isCareOutcomeFormComplete(careOutcomeForm)}
+        onChange={(nextForm) => {
+          setCareOutcomeForm(nextForm);
+          setVisitReport('');
+          setReportError(null);
+        }}
+        onGenerate={handleGenerateVisitReport}
+        onFinish={handleFinishVisitWithCheckOut}
+        onClose={() => setFinishFormOpen(false)}
+      />
     </SafeAreaView>
   );
 };
+
+function isCareOutcomeFormComplete(form: CareOutcomeFormAnswers) {
+  const required =
+    Boolean(form.overallCondition) &&
+    Boolean(form.conditionChanged) &&
+    Boolean(form.vitalsRequired) &&
+    Boolean(form.tasksCompleted) &&
+    Boolean(form.medicationRequired) &&
+    form.wellbeingConcerns.length > 0 &&
+    Boolean(form.followUpRequired) &&
+    Boolean(form.overallOutcome) &&
+    form.confirmedAccurate;
+
+  if (!required) return false;
+  if (form.conditionChanged === 'Yes' && !form.conditionChangeNotes.trim()) return false;
+  if (form.tasksCompleted !== 'Yes' && form.incompleteReasons.length === 0 && !form.incompleteOther.trim()) return false;
+  if (form.medicationRequired === 'Yes' && !form.medicationStatus) return false;
+  if (form.medicationConcern === 'Yes' && !form.medicationConcernNotes.trim()) return false;
+  if (form.wellbeingConcerns.includes('Other') && !form.wellbeingOther.trim()) return false;
+  if (form.followUpRequired !== 'No follow-up required' && !form.followUpDetails.trim()) return false;
+  return true;
+}
+
+function FinishVisitFormModal({
+  visible,
+  form,
+  report,
+  reportError,
+  isGenerating,
+  isSaving,
+  canGenerate,
+  onChange,
+  onGenerate,
+  onFinish,
+  onClose,
+}: {
+  visible: boolean;
+  form: CareOutcomeFormAnswers;
+  report: string;
+  reportError: string | null;
+  isGenerating: boolean;
+  isSaving: boolean;
+  canGenerate: boolean;
+  onChange: (form: CareOutcomeFormAnswers) => void;
+  onGenerate: () => void;
+  onFinish: () => void;
+  onClose: () => void;
+}) {
+  const update = (patch: Partial<CareOutcomeFormAnswers>) => onChange({ ...form, ...patch });
+  const updateVitals = (key: string, value: string) => update({ vitals: { ...form.vitals, [key]: value } });
+  const toggleList = (key: 'incompleteReasons' | 'wellbeingConcerns', value: string) => {
+    const current = form[key];
+    const next = current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value];
+    update({ [key]: next } as Pick<CareOutcomeFormAnswers, typeof key>);
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.finishModal}>
+          <View style={styles.finishModalHeader}>
+            <View style={styles.currentTaskCopy}>
+              <Text style={styles.priorityLabel}>FINISH VISIT</Text>
+              <Text style={styles.currentTaskTitle}>Care outcome form</Text>
+              <Text style={styles.currentTaskDetail}>
+                Complete the preset form, generate the visit report, then finish the visit.
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={onClose} activeOpacity={0.75}>
+              <Text style={styles.modalCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.finishFormScroll} contentContainerStyle={styles.finishFormContent}>
+            <FormSection title="1. Patient Condition">
+              <SingleChoice label="How was the patient's overall condition during this visit? *" value={form.overallCondition} options={overallConditionOptions} onChange={(overallCondition) => update({ overallCondition })} />
+              <SingleChoice label="Were there any noticeable changes in the patient's condition? *" value={form.conditionChanged} options={yesNoOptions} onChange={(conditionChanged) => update({ conditionChanged })} />
+              {form.conditionChanged === 'Yes' && (
+                <TextField label="If Yes, please describe *" value={form.conditionChangeNotes} onChange={(conditionChangeNotes) => update({ conditionChangeNotes })} />
+              )}
+            </FormSection>
+
+            <FormSection title="2. Vital Signs">
+              <SingleChoice label="Were vital signs required or taken during this visit? *" value={form.vitalsRequired} options={vitalsRequiredOptions} onChange={(vitalsRequired) => update({ vitalsRequired })} />
+              {form.vitalsRequired === 'Yes' && (
+                <View style={styles.vitalsGrid}>
+                  <TextField compact label="BP systolic" value={form.vitals.bloodPressureSystolic} onChange={(value) => updateVitals('bloodPressureSystolic', value)} keyboardType="numeric" />
+                  <TextField compact label="BP diastolic" value={form.vitals.bloodPressureDiastolic} onChange={(value) => updateVitals('bloodPressureDiastolic', value)} keyboardType="numeric" />
+                  <TextField compact label="Heart rate bpm" value={form.vitals.heartRate} onChange={(value) => updateVitals('heartRate', value)} keyboardType="numeric" />
+                  <TextField compact label="Temperature C" value={form.vitals.temperature} onChange={(value) => updateVitals('temperature', value)} keyboardType="numeric" />
+                  <TextField compact label="Oxygen saturation %" value={form.vitals.oxygenSaturation} onChange={(value) => updateVitals('oxygenSaturation', value)} keyboardType="numeric" />
+                  <TextField compact label="Respiratory rate" value={form.vitals.respiratoryRate} onChange={(value) => updateVitals('respiratoryRate', value)} keyboardType="numeric" />
+                  <TextField compact label="Blood glucose mmol/L" value={form.vitals.bloodGlucose} onChange={(value) => updateVitals('bloodGlucose', value)} keyboardType="numeric" />
+                  <TextField compact label="Weight kg" value={form.vitals.weight} onChange={(value) => updateVitals('weight', value)} keyboardType="numeric" />
+                </View>
+              )}
+              <SingleChoice label="Were any recorded vital signs outside the patient's expected range?" value={form.vitalsConcern} options={vitalsConcernOptions} onChange={(vitalsConcern) => update({ vitalsConcern })} />
+              {(form.vitalsConcern === 'Yes' || form.vitalsConcern === 'Unsure') && (
+                <TextField label="Describe the vital-sign concern" value={form.vitalsConcernNotes} onChange={(vitalsConcernNotes) => update({ vitalsConcernNotes })} />
+              )}
+            </FormSection>
+
+            <FormSection title="3. Care Task Outcomes">
+              <SingleChoice label="Were all scheduled care tasks completed? *" value={form.tasksCompleted} options={tasksCompletedOptions} onChange={(tasksCompleted) => update({ tasksCompleted })} />
+              {form.tasksCompleted && form.tasksCompleted !== 'Yes' && (
+                <>
+                  <MultiChoice label="If not all tasks were completed, select the reason *" values={form.incompleteReasons} options={incompleteReasonOptions} onToggle={(value) => toggleList('incompleteReasons', value)} />
+                  <TextField label="Other reason" value={form.incompleteOther} onChange={(incompleteOther) => update({ incompleteOther })} />
+                </>
+              )}
+              <TextField label="Additional care task notes" value={form.taskNotes} onChange={(taskNotes) => update({ taskNotes })} />
+            </FormSection>
+
+            <FormSection title="4. Medication Support Outcome">
+              <SingleChoice label="Was medication support required during this visit? *" value={form.medicationRequired} options={yesNoOptions} onChange={(medicationRequired) => update({ medicationRequired })} />
+              {form.medicationRequired === 'Yes' && (
+                <SingleChoice label="Medication support status *" value={form.medicationStatus} options={medicationStatusOptions} onChange={(medicationStatus) => update({ medicationStatus })} />
+              )}
+              <SingleChoice label="Were there any medication-related concerns?" value={form.medicationConcern} options={yesNoOptions} onChange={(medicationConcern) => update({ medicationConcern })} />
+              {form.medicationConcern === 'Yes' && (
+                <TextField label="Describe the medication concern *" value={form.medicationConcernNotes} onChange={(medicationConcernNotes) => update({ medicationConcernNotes })} />
+              )}
+            </FormSection>
+
+            <FormSection title="5. Patient Wellbeing and Observations">
+              <MultiChoice label="Did you observe any new concerns during the visit? *" values={form.wellbeingConcerns} options={[...wellbeingConcernOptions, 'Other']} onToggle={(value) => toggleList('wellbeingConcerns', value)} />
+              {form.wellbeingConcerns.includes('Other') && (
+                <TextField label="Other concern *" value={form.wellbeingOther} onChange={(wellbeingOther) => update({ wellbeingOther })} />
+              )}
+              <TextField label="Observation notes" value={form.observationNotes} onChange={(observationNotes) => update({ observationNotes })} />
+            </FormSection>
+
+            <FormSection title="6. Follow-up Required">
+              <SingleChoice label="Does this visit require follow-up action? *" value={form.followUpRequired} options={followUpOptions} onChange={(followUpRequired) => update({ followUpRequired })} />
+              {form.followUpRequired && form.followUpRequired !== 'No follow-up required' && (
+                <TextField label="Follow-up details *" value={form.followUpDetails} onChange={(followUpDetails) => update({ followUpDetails })} />
+              )}
+            </FormSection>
+
+            <FormSection title="7. Overall Visit Outcome">
+              <SingleChoice label="Select the overall outcome of this visit *" value={form.overallOutcome} options={overallOutcomeOptions} onChange={(overallOutcome) => update({ overallOutcome })} />
+              <TextField label="Final HCW comments" value={form.finalComments} onChange={(finalComments) => update({ finalComments })} />
+              <TouchableOpacity style={styles.confirmRow} onPress={() => update({ confirmedAccurate: !form.confirmedAccurate })} activeOpacity={0.75}>
+                <View style={[styles.taskCheck, form.confirmedAccurate && styles.taskCheckDone]}>
+                  <Text style={styles.taskCheckText}>{form.confirmedAccurate ? '✓' : ''}</Text>
+                </View>
+                <Text style={styles.confirmText}>I confirm the information recorded above is accurate to the best of my knowledge. *</Text>
+              </TouchableOpacity>
+            </FormSection>
+
+            <View style={styles.reportPanel}>
+              <Text style={styles.priorityLabel}>GENERATED VISIT REPORT</Text>
+              {reportError && <Text style={styles.errorText}>{reportError}</Text>}
+              {report ? (
+                <Text style={styles.reportText}>{report}</Text>
+              ) : (
+                <Text style={styles.currentTaskDetail}>
+                  The report will appear here after all required questions are complete and the local AI finishes generation.
+                </Text>
+              )}
+            </View>
+          </ScrollView>
+          <View style={styles.finishModalFooter}>
+            <ActionButton
+              label={isGenerating ? 'Generating...' : 'Generate Visit Report'}
+              onPress={onGenerate}
+              disabled={!canGenerate || isGenerating || isSaving}
+            />
+            <ActionButton
+              label={isSaving ? 'Finishing...' : 'Finish Visit'}
+              tone="success"
+              onPress={onFinish}
+              disabled={!report || isGenerating || isSaving}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.formSection}>
+      <Text style={styles.formSectionTitle}>{title}</Text>
+      {children}
+    </View>
+  );
+}
+
+function SingleChoice({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <View style={styles.fieldBlock}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={styles.choiceWrap}>
+        {options.map((option) => (
+          <TouchableOpacity
+            key={option}
+            style={[styles.choiceButton, value === option && styles.choiceButtonActive]}
+            onPress={() => onChange(option)}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.choiceText, value === option && styles.choiceTextActive]}>{option}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function MultiChoice({
+  label,
+  values,
+  options,
+  onToggle,
+}: {
+  label: string;
+  values: string[];
+  options: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <View style={styles.fieldBlock}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={styles.choiceWrap}>
+        {options.map((option) => {
+          const active = values.includes(option);
+          return (
+            <TouchableOpacity
+              key={option}
+              style={[styles.choiceButton, active && styles.choiceButtonActive]}
+              onPress={() => onToggle(option)}
+              activeOpacity={0.75}
+            >
+              <Text style={[styles.choiceText, active && styles.choiceTextActive]}>{option}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  keyboardType = 'default',
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  keyboardType?: 'default' | 'numeric';
+  compact?: boolean;
+}) {
+  return (
+    <View style={[styles.fieldBlock, compact && styles.compactField]}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={[styles.textInput, !compact && styles.textArea]}
+        value={value}
+        onChangeText={onChange}
+        keyboardType={keyboardType}
+        multiline={!compact}
+        placeholder="Enter details"
+        placeholderTextColor="#8A9B93"
+      />
+    </View>
+  );
+}
 
 function VisitSnapshot({
   patientName,
@@ -580,7 +1003,7 @@ function SimpleVisitActions({
   currentTask,
   tasks,
   openTaskCount,
-  pendingTaskCount,
+  incompleteRequiredTaskCount,
   canFinish,
   visit,
   disabled,
@@ -602,7 +1025,7 @@ function SimpleVisitActions({
   currentTask: CareTask;
   tasks: CareTask[];
   openTaskCount: number;
-  pendingTaskCount: number;
+  incompleteRequiredTaskCount: number;
   canFinish: boolean;
   visit: VisitContext;
   disabled: boolean;
@@ -714,8 +1137,8 @@ function SimpleVisitActions({
         <View style={styles.finishCopy}>
           <Text style={styles.finishText}>Finished the visit?</Text>
           <Text style={styles.finishHint}>
-            {pendingTaskCount > 0
-              ? `${pendingTaskCount} task${pendingTaskCount > 1 ? 's' : ''} still pending. Complete or mark an issue before finishing.`
+            {incompleteRequiredTaskCount > 0
+              ? `${incompleteRequiredTaskCount} required task${incompleteRequiredTaskCount > 1 ? 's' : ''} must be completed before finishing.`
               : visit.checkOut
                 ? `Check-out: ${locationSnapshotSummary(visit.checkOut)}`
                 : 'Check-out will be recorded when finishing this visit'}
@@ -727,7 +1150,7 @@ function SimpleVisitActions({
           activeOpacity={0.75}
           disabled={!canFinish || disabled}
         >
-          <Text style={styles.finishButtonText}>{disabled ? 'Saving...' : 'Finish visit'}</Text>
+          <Text style={styles.finishButtonText}>{disabled ? 'Saving...' : 'Finish Visit'}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -1357,6 +1780,88 @@ const styles = StyleSheet.create({
   timelineTime: { color: '#60746B', fontSize: 12, flex: 1, textAlign: 'right' },
   emptyTimeline: { color: '#60746B', fontSize: 13 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', justifyContent: 'flex-start' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.34)', justifyContent: 'flex-end' },
+  finishModal: {
+    maxHeight: '94%',
+    backgroundColor: '#F7FAF8',
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    overflow: 'hidden',
+  },
+  finishModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 14,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#D9E2DE',
+  },
+  modalCloseButton: {
+    backgroundColor: '#E8EFEA',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  modalCloseText: { color: '#2E6F73', fontSize: 12, fontWeight: '900' },
+  finishFormScroll: { maxHeight: 560 },
+  finishFormContent: { padding: 14, gap: 12 },
+  formSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    padding: 12,
+    gap: 10,
+  },
+  formSectionTitle: { color: '#16231E', fontSize: 16, fontWeight: '900' },
+  fieldBlock: { gap: 7 },
+  fieldLabel: { color: '#3D4E47', fontSize: 12, fontWeight: '800', lineHeight: 17 },
+  choiceWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  choiceButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#C9D7D1',
+    backgroundColor: '#F7FAF8',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  choiceButtonActive: { backgroundColor: '#2E6F73', borderColor: '#2E6F73' },
+  choiceText: { color: '#3D4E47', fontSize: 12, fontWeight: '800' },
+  choiceTextActive: { color: '#FFFFFF' },
+  vitalsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  compactField: { width: '48%', minWidth: 145 },
+  textInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#C9D7D1',
+    borderRadius: 8,
+    color: '#16231E',
+    fontSize: 13,
+    fontWeight: '600',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  textArea: { minHeight: 74, textAlignVertical: 'top' },
+  confirmRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, paddingTop: 4 },
+  confirmText: { flex: 1, color: '#3D4E47', fontSize: 12, fontWeight: '800', lineHeight: 17 },
+  reportPanel: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    padding: 12,
+    gap: 8,
+  },
+  reportText: { color: '#16231E', fontSize: 12, lineHeight: 18, fontWeight: '600' },
+  finishModalFooter: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#D9E2DE',
+  },
   queueDrawer: { width: '86%', maxWidth: 360, backgroundColor: '#F7FAF8', minHeight: '100%', paddingTop: 54, paddingHorizontal: 14 },
   drawerTitle: { color: '#16231E', fontSize: 22, fontWeight: '900', marginBottom: 14 },
   queueItem: { flexDirection: 'row', gap: 12, backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', padding: 12, marginBottom: 8 },

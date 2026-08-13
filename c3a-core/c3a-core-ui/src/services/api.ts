@@ -7,6 +7,8 @@ import {
   LocationSnapshot,
   PatientInfo,
   ScenarioContext,
+  VisitReportRequest,
+  VisitReportResponse,
   VisitQueueItem,
 } from '../types';
 
@@ -309,6 +311,16 @@ export async function finishVisit(
     method: 'POST',
     body: JSON.stringify({ workerId, checkOut }),
   });
+}
+
+export async function generateVisitReport(
+  visitId: string,
+  request: VisitReportRequest,
+): Promise<VisitReportResponse> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/report`, {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }, 300000);
 }
 
 /**

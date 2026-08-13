@@ -32,6 +32,8 @@ from app.schemas import (
     ChatRequest,
     ChatResponse,
     CompleteVisitRequest,
+    GenerateVisitReportRequest,
+    GenerateVisitReportResponse,
     ScenarioResponse,
     ShiftSummaryResponse,
     StartVisitRequest,
@@ -97,6 +99,31 @@ def _reply_with_sources(reply: str, sources: list[str]) -> str:
 def _uses_database_context(ai_response) -> bool:
     database_context = (ai_response.rag or {}).get("database_context", {})
     return bool(database_context.get("used_for_chat"))
+
+
+def _visit_report_prompt(req: GenerateVisitReportRequest) -> str:
+    return (
+        "Generate a standardised home-care visit report for records. "
+        "Use only the supplied form answers, vitals, observations, visit context, "
+        "tasks, events, and risk alerts. Do not invent clinical facts. "
+        "Write concise professional English for HCW review. "
+        "Use this structure exactly:\n"
+        "1. Visit Summary\n"
+        "2. Patient Condition\n"
+        "3. Vital Signs\n"
+        "4. Care Task Outcomes\n"
+        "5. Medication Support\n"
+        "6. Wellbeing and Observations\n"
+        "7. Follow-up Required\n"
+        "8. Overall Outcome\n\n"
+        f"Patient context:\n{json.dumps(req.patientContext.model_dump(exclude_none=True), indent=2)}\n\n"
+        f"Worker context:\n{json.dumps(req.workerContext.model_dump(exclude_none=True), indent=2)}\n\n"
+        f"Visit context:\n{json.dumps(req.visitContext.model_dump(exclude_none=True), indent=2)}\n\n"
+        f"Care tasks:\n{json.dumps([task.model_dump(exclude_none=True) for task in req.taskContext], indent=2)}\n\n"
+        f"Events:\n{json.dumps([event.model_dump(exclude_none=True) for event in (req.eventContext or [])], indent=2)}\n\n"
+        f"Risk alerts:\n{json.dumps([risk.model_dump(exclude_none=True) for risk in (req.riskContext or [])], indent=2)}\n\n"
+        f"Completed Finish Visit care outcome form:\n{json.dumps(req.careOutcomeForm, indent=2)}"
+    )
 
 
 def _visit_error(exc: Exception) -> HTTPException:
@@ -223,6 +250,41 @@ def complete_visit(visit_id: str, req: CompleteVisitRequest):
         )
     except Exception as exc:
         raise _visit_error(exc) from exc
+
+
+@app.post("/visits/{visit_id}/report", response_model=GenerateVisitReportResponse)
+async def generate_visit_report(visit_id: str, req: GenerateVisitReportRequest, request: Request):
+    started_at = time.perf_counter()
+    logger.info("API POST /visits/%s/report received", visit_id)
+    prompt = _visit_report_prompt(req)
+    try:
+        ai_response = await ai_client.chat(
+            ChatRequest(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You generate concise, accurate aged-care visit reports from structured HCW forms.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                patientContext=req.patientContext,
+                workerContext=req.workerContext,
+                visitContext=req.visitContext,
+                taskContext=req.taskContext,
+                eventContext=req.eventContext,
+                riskContext=req.riskContext,
+            ),
+            request_id=getattr(request.state, "request_id", None),
+        )
+        logger.info(
+            "API POST /visits/%s/report completed elapsed_ms=%.1f chars=%s",
+            visit_id,
+            (time.perf_counter() - started_at) * 1000,
+            len(ai_response.reply),
+        )
+        return GenerateVisitReportResponse(report=ai_response.reply)
+    except AiServiceUnavailable as exc:
+        raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 
 
 @app.post("/chat", response_model=ChatResponse)

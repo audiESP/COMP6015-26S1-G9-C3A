@@ -7,7 +7,10 @@ import {
   LocationPermissionStatus,
   LocationSnapshot,
   PatientInfo,
+  RiskAlert,
+  ScenarioEvent,
   ScenarioContext,
+  VisitStatus,
   VisitQueueItem,
 } from '../types';
 import { createDemoScenario, createVisitQueue } from '../data/demoScenario';
@@ -25,9 +28,214 @@ import {
 
 const DEFAULT_WORKER_ID = 'cw-001';
 const DEFAULT_SHIFT_DATE = '2026-05-12';
+const OFFLINE_WORKFLOW_MESSAGE =
+  'Backend is unreachable, so this visit update was saved locally for the demo session.';
 
 function timestamp() {
   return new Date().toISOString();
+}
+
+function createEvent(
+  type: ScenarioEvent['type'],
+  note?: string,
+): ScenarioEvent {
+  return {
+    id: `${type}-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+    type,
+    timestamp: timestamp(),
+    note,
+  };
+}
+
+function isTransientNetworkError(err: unknown) {
+  if (!(err instanceof Error)) return false;
+
+  const message = err.message.toLowerCase();
+  return (
+    err.name === 'AbortError' ||
+    message.includes('network request failed') ||
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('the request timed out')
+  );
+}
+
+function locationEventType(snapshot: LocationSnapshot, isCheckIn: boolean): ScenarioEvent['type'] {
+  if (snapshot.permissionStatus === 'denied' || snapshot.source === 'manual_override') {
+    return 'location_permission_denied';
+  }
+  if (snapshot.withinExpectedArea === false) {
+    return 'location_out_of_range';
+  }
+  return isCheckIn ? 'location_check_in' : 'location_check_out';
+}
+
+function withEventIfMissing(
+  events: ScenarioEvent[],
+  type: ScenarioEvent['type'],
+  note?: string,
+) {
+  return events.some((event) => event.type === type)
+    ? events
+    : [...events, createEvent(type, note)];
+}
+
+function applyLocalStartVisit(
+  current: ScenarioContext,
+  checkIn?: LocationSnapshot,
+): ScenarioContext {
+  const events = checkIn
+    ? [...current.events, createEvent(locationEventType(checkIn, true), checkIn.note)]
+    : current.events;
+  const withArrived = withEventIfMissing(events, 'arrived');
+  const withCareStarted = withEventIfMissing(withArrived, 'care_started');
+
+  return {
+    ...current,
+    lifecycleStep: 'care_tasks',
+    visit: {
+      ...current.visit,
+      status: 'in_progress',
+      arrivedAt: current.visit.arrivedAt ?? timestamp(),
+      checkIn: checkIn ?? current.visit.checkIn,
+    },
+    tasks: current.tasks.map((task) =>
+      task.id === 'arrival' || task.type === 'arrival'
+        ? { ...task, status: 'completed' }
+        : task,
+    ),
+    events: withCareStarted,
+  };
+}
+
+function applyLocalTaskStatus(
+  current: ScenarioContext,
+  taskId: string,
+  status: CareTaskStatus,
+): ScenarioContext {
+  const task = current.tasks.find((item) => item.id === taskId);
+  const medicationCompleted = task?.type === 'medication' && status === 'completed';
+  return {
+    ...current,
+    lifecycleStep: current.lifecycleStep === 'pre_visit' || current.lifecycleStep === 'arrival'
+      ? 'care_tasks'
+      : current.lifecycleStep,
+    visit: {
+      ...current.visit,
+      status: current.visit.status === 'scheduled' || current.visit.status === 'arrived'
+        ? 'in_progress'
+        : current.visit.status,
+    },
+    tasks: current.tasks.map((item) =>
+      item.id === taskId ? { ...item, status } : item,
+    ),
+    events: medicationCompleted
+      ? [...current.events, createEvent('medication_given')]
+      : current.events,
+  };
+}
+
+function localIssueDetails(
+  taskLabel: string,
+  issueType: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+  taskType?: string,
+): {
+  note: string;
+  visitStatus: VisitStatus;
+  lifecycleStep: ScenarioContext['lifecycleStep'];
+  alert: RiskAlert;
+  eventType: ScenarioEvent['type'];
+} {
+  if (issueType === 'safety_concern') {
+    return {
+      note: `${taskLabel}: safety concern`,
+      visitStatus: 'incident',
+      lifecycleStep: 'incident_active',
+      eventType: 'escalation_triggered',
+      alert: {
+        id: `local-safety-${Date.now()}`,
+        level: 'high',
+        title: 'Safety concern recorded',
+        message: 'Pause routine tasks and follow escalation guidance before continuing.',
+        source: 'rules',
+      },
+    };
+  }
+
+  if (taskType === 'medication') {
+    return {
+      note: `${taskLabel}: ${issueType === 'patient_declined' ? 'patient declined' : 'could not complete'}`,
+      visitStatus: 'delayed',
+      lifecycleStep: 'incident_active',
+      eventType: 'medication_delayed',
+      alert: {
+        id: `local-medication-${Date.now()}`,
+        level: 'high',
+        title: 'Medication timing issue',
+        message: 'Document the delay and seek nurse or supervisor advice if needed.',
+        source: 'rules',
+      },
+    };
+  }
+
+  return {
+    note: `${taskLabel}: ${issueType === 'patient_declined' ? 'patient declined' : 'could not complete'}`,
+    visitStatus: 'follow_up_required',
+    lifecycleStep: 'review',
+    eventType: 'follow_up_required',
+    alert: {
+      id: `local-follow-up-${Date.now()}`,
+      level: 'moderate',
+      title: 'Follow-up required',
+      message: 'Schedule a later check and include the reason in the visit summary.',
+      source: 'rules',
+    },
+  };
+}
+
+function applyLocalTaskIssue(
+  current: ScenarioContext,
+  taskId: string,
+  issueType: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+): ScenarioContext {
+  const task = current.tasks.find((item) => item.id === taskId);
+  const details = localIssueDetails(task?.label ?? 'Care task', issueType, task?.type);
+  return {
+    ...current,
+    lifecycleStep: details.lifecycleStep,
+    visit: {
+      ...current.visit,
+      status: details.visitStatus,
+    },
+    tasks: current.tasks.map((item) =>
+      item.id === taskId ? { ...item, status: 'issue' } : item,
+    ),
+    events: [...current.events, createEvent(details.eventType, details.note)],
+    alerts: [...current.alerts, details.alert],
+  };
+}
+
+function applyLocalCompleteVisit(
+  current: ScenarioContext,
+  checkOut?: LocationSnapshot,
+): ScenarioContext {
+  const events = checkOut
+    ? [...current.events, createEvent(locationEventType(checkOut, false), checkOut.note)]
+    : current.events;
+
+  return {
+    ...current,
+    lifecycleStep: 'closed',
+    visit: {
+      ...current.visit,
+      status: 'completed',
+      checkOut: checkOut ?? current.visit.checkOut,
+    },
+    tasks: current.tasks.map((task) =>
+      task.status === 'pending' ? { ...task, status: 'skipped' } : task,
+    ),
+    events: [...events, createEvent('visit_completed')],
+  };
 }
 
 function createLocationSnapshot(
@@ -174,7 +382,10 @@ export function useScenarioStore() {
     });
   }, [visitQueue]);
 
-  const runMutation = useCallback(async (operation: () => Promise<ScenarioContext>) => {
+  const runMutation = useCallback(async (
+    operation: () => Promise<ScenarioContext>,
+    offlineFallback?: (current: ScenarioContext) => ScenarioContext,
+  ) => {
     if (savingRef.current) {
       return scenario;
     }
@@ -186,6 +397,12 @@ export function useScenarioStore() {
       applyScenario(nextScenario);
       return nextScenario;
     } catch (err) {
+      if (offlineFallback && isTransientNetworkError(err)) {
+        const nextScenario = offlineFallback(scenario);
+        applyScenario(nextScenario);
+        setError(OFFLINE_WORKFLOW_MESSAGE);
+        return nextScenario;
+      }
       setError(err instanceof Error ? err.message : 'Visit update failed.');
       throw err;
     } finally {
@@ -197,6 +414,7 @@ export function useScenarioStore() {
   const startVisit = useCallback((checkIn?: LocationSnapshot) => {
     return runMutation(() =>
       startVisitApi(scenario.visit.id, scenario.worker.id, checkIn),
+      (current) => applyLocalStartVisit(current, checkIn),
     );
   }, [runMutation, scenario.visit.id, scenario.worker.id]);
 
@@ -205,6 +423,7 @@ export function useScenarioStore() {
     if (!task) return Promise.resolve(scenario);
     return runMutation(() =>
       completeTask(scenario.visit.id, task.id, scenario.worker.id),
+      (current) => applyLocalTaskStatus(current, task.id, 'completed'),
     );
   }, [runMutation, scenario]);
 
@@ -214,18 +433,21 @@ export function useScenarioStore() {
   ) => {
     return runMutation(() =>
       reportTaskIssueApi(scenario.visit.id, taskId, type, scenario.worker.id),
+      (current) => applyLocalTaskIssue(current, taskId, type),
     );
   }, [runMutation, scenario.visit.id, scenario.worker.id]);
 
   const completeVisit = useCallback((checkOut?: LocationSnapshot) => {
     return runMutation(() =>
       finishVisit(scenario.visit.id, scenario.worker.id, checkOut),
+      (current) => applyLocalCompleteVisit(current, checkOut),
     );
   }, [runMutation, scenario.visit.id, scenario.worker.id]);
 
   const updateTask = useCallback((id: string, status: CareTaskStatus) => {
     return runMutation(() =>
       updateTaskStatus(scenario.visit.id, id, status, scenario.worker.id),
+      (current) => applyLocalTaskStatus(current, id, status),
     );
   }, [runMutation, scenario.visit.id, scenario.worker.id]);
 

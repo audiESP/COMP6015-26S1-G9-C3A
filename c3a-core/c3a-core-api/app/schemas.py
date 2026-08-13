@@ -208,6 +208,20 @@ class ChatResponse(BaseModel):
     sessionId: Optional[str] = None
 
 
+class GenerateVisitReportRequest(BaseModel):
+    patientContext: PatientContext
+    workerContext: WorkerContext
+    visitContext: VisitContext
+    taskContext: list[CareTaskContext]
+    eventContext: Optional[list[ScenarioEventContext]] = None
+    riskContext: Optional[list[RiskContext]] = None
+    careOutcomeForm: dict[str, Any]
+
+
+class GenerateVisitReportResponse(BaseModel):
+    report: str
+
+
 class UploadRequest(BaseModel):
     base64: str
     mimeType: str

@@ -204,3 +204,43 @@ export interface ApiChatResponse {
   reply: string;
   sessionId?: string;
 }
+
+export interface CareOutcomeFormAnswers {
+  overallCondition: string;
+  conditionChanged: string;
+  conditionChangeNotes: string;
+  vitalsRequired: string;
+  vitals: Record<string, string>;
+  vitalsConcern: string;
+  vitalsConcernNotes: string;
+  tasksCompleted: string;
+  incompleteReasons: string[];
+  incompleteOther: string;
+  taskNotes: string;
+  medicationRequired: string;
+  medicationStatus: string;
+  medicationConcern: string;
+  medicationConcernNotes: string;
+  wellbeingConcerns: string[];
+  wellbeingOther: string;
+  observationNotes: string;
+  followUpRequired: string;
+  followUpDetails: string;
+  overallOutcome: string;
+  finalComments: string;
+  confirmedAccurate: boolean;
+}
+
+export interface VisitReportRequest {
+  patientContext: PatientInfo;
+  workerContext: WorkerContext;
+  visitContext: VisitContext;
+  taskContext: CareTask[];
+  eventContext?: ScenarioEvent[];
+  riskContext?: RiskAlert[];
+  careOutcomeForm: CareOutcomeFormAnswers;
+}
+
+export interface VisitReportResponse {
+  report: string;
+}
