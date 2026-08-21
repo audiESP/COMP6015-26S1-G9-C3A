@@ -81,6 +81,18 @@ class CareTaskContext(BaseModel):
     detail: Optional[str] = None
 
 
+class MedicationSupportContext(BaseModel):
+    id: Optional[str] = None
+    visitId: str
+    taskId: Optional[str] = None
+    status: str
+    notes: Optional[str] = None
+    timestamp: str
+    hcwId: str
+    medicationNames: list[str] = []
+    medicationItems: list[dict[str, Any]] = []
+
+
 class ScenarioEventContext(BaseModel):
     id: Optional[str] = None
     type: Optional[str] = None
@@ -121,6 +133,7 @@ class ScenarioResponse(BaseModel):
     visit: VisitContext
     lifecycleStep: str
     tasks: list[CareTaskContext]
+    medicationSupport: Optional[MedicationSupportContext] = None
     events: list[ScenarioEventContext]
     alerts: list[RiskContext]
     incidentChecklist: list[IncidentChecklistItem]
@@ -178,6 +191,16 @@ class TaskIssueRequest(BaseModel):
     workerId: Optional[str] = None
 
 
+class MedicationSupportRequest(BaseModel):
+    taskId: Optional[str] = None
+    status: str
+    notes: Optional[str] = None
+    timestamp: Optional[str] = None
+    hcwId: str
+    medicationNames: list[str] = []
+    medicationItems: list[dict[str, Any]] = []
+
+
 class ShiftSummaryResponse(BaseModel):
     total: int
     completed: int
@@ -197,6 +220,7 @@ class ChatRequest(BaseModel):
     visitContext: Optional[VisitContext] = None
     currentTaskContext: Optional[CareTaskContext] = None
     taskContext: Optional[list[CareTaskContext]] = None
+    medicationSupportContext: Optional[MedicationSupportContext] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None
     checklistContext: Optional[list[IncidentChecklistItem]] = None
@@ -213,6 +237,7 @@ class GenerateVisitReportRequest(BaseModel):
     workerContext: WorkerContext
     visitContext: VisitContext
     taskContext: list[CareTaskContext]
+    medicationSupportContext: Optional[MedicationSupportContext] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None
     careOutcomeForm: dict[str, Any]

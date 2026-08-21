@@ -130,6 +130,32 @@ export interface CareTask {
   detail?: string;
 }
 
+export type MedicationSupportStatus =
+  | 'Completed'
+  | 'Delayed'
+  | 'Declined'
+  | 'Unavailable'
+  | 'Unable to Confirm';
+
+export type MedicationTakenStatus = 'Taken' | 'Not Taken' | 'Unable to Confirm';
+
+export interface MedicationSupportItem {
+  name: string;
+  takenStatus?: MedicationTakenStatus;
+}
+
+export interface MedicationSupportRecord {
+  id?: string;
+  visitId: string;
+  taskId?: string;
+  status: MedicationSupportStatus;
+  notes?: string;
+  timestamp: string;
+  hcwId: string;
+  medicationNames: string[];
+  medicationItems?: MedicationSupportItem[];
+}
+
 export interface ScenarioEvent {
   id: string;
   type:
@@ -167,6 +193,7 @@ export interface ScenarioContext {
   visit: VisitContext;
   lifecycleStep: VisitLifecycleStep;
   tasks: CareTask[];
+  medicationSupport?: MedicationSupportRecord | null;
   events: ScenarioEvent[];
   alerts: RiskAlert[];
   incidentChecklist: IncidentChecklistItem[];
@@ -194,6 +221,7 @@ export interface ApiChatRequest {
   visitContext?: VisitContext;
   currentTaskContext?: CareTask;
   taskContext?: CareTask[];
+  medicationSupportContext?: MedicationSupportRecord | null;
   eventContext?: ScenarioEvent[];
   riskContext?: RiskAlert[];
   checklistContext?: IncidentChecklistItem[];
@@ -238,6 +266,7 @@ export interface VisitReportRequest {
   taskContext: CareTask[];
   eventContext?: ScenarioEvent[];
   riskContext?: RiskAlert[];
+  medicationSupportContext?: MedicationSupportRecord | null;
   careOutcomeForm: CareOutcomeFormAnswers;
 }
 

@@ -29,6 +29,9 @@ import {
   CareTask,
   CareOutcomeFormAnswers,
   LocationSnapshot,
+  MedicationSupportItem,
+  MedicationSupportRecord,
+  MedicationSupportStatus,
   Message,
   PatientInfo,
   RiskAlert,
@@ -102,7 +105,8 @@ const incompleteReasonOptions = [
   'Insufficient time',
   'Required equipment/resources unavailable',
 ];
-const medicationStatusOptions = ['Completed', 'Delayed', 'Declined', 'Unavailable', 'Unable to confirm'];
+const medicationStatusOptions: MedicationSupportStatus[] = ['Completed', 'Delayed', 'Declined', 'Unavailable', 'Unable to Confirm'];
+const medicationTakenStatusOptions = ['Taken', 'Not Taken', 'Unable to Confirm'] as const;
 const wellbeingConcernOptions = [
   'No new concerns',
   'Pain or discomfort',
@@ -182,6 +186,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     requestLocationCheckOut,
     completeVisit,
     updateTask,
+    updateMedicationSupport,
     updatePatient,
     selectVisit,
     goToNextVisit,
@@ -325,6 +330,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
         workerContext: scenario.worker,
         visitContext: scenario.visit,
         taskContext: scenario.tasks,
+        medicationSupportContext: scenario.medicationSupport,
         eventContext: scenario.events,
         riskContext: scenario.alerts,
         careOutcomeForm,
@@ -355,6 +361,11 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     await reportTaskIssue(taskId, type);
     setActiveSection('care');
   };
+
+  const handleMedicationSupportSave = useCallback((record: Omit<MedicationSupportRecord, 'id' | 'visitId'>) => {
+    if (workflowSaving) return;
+    return updateMedicationSupport(record);
+  }, [updateMedicationSupport, workflowSaving]);
 
   const handleNextPatient = () => {
     if (workflowSaving) return;
@@ -499,6 +510,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             <CareDetailsPanel
               patient={scenario.patient}
               worker={scenario.worker.name}
+              workerId={scenario.worker.id}
               location={scenario.visit.location}
               status={statusLabels[scenario.visit.status]}
               lifecycle={stepLabels[scenario.lifecycleStep]}
@@ -511,6 +523,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               visitStarted={visitStarted}
               disabled={workflowSaving}
               tasks={scenario.tasks}
+              medicationSupport={scenario.medicationSupport}
               alerts={activeAlerts}
               visit={scenario.visit}
               selectedTaskId={selectedTaskId}
@@ -521,6 +534,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
                 setTaskIssueMenuOpen((current) => (current === taskId ? null : taskId))
               }
               onTaskIssue={handleTaskIssue}
+              onMedicationSupportSave={handleMedicationSupportSave}
             />
           )}
         </ScrollView>
@@ -612,6 +626,7 @@ function isCareOutcomeFormComplete(form: CareOutcomeFormAnswers) {
   if (form.conditionChanged === 'Yes' && !form.conditionChangeNotes.trim()) return false;
   if (form.tasksCompleted !== 'Yes' && form.incompleteReasons.length === 0 && !form.incompleteOther.trim()) return false;
   if (form.medicationRequired === 'Yes' && !form.medicationStatus) return false;
+  if (form.medicationRequired === 'Yes' && form.medicationStatus && form.medicationStatus !== 'Completed' && !form.medicationConcernNotes.trim()) return false;
   if (form.medicationConcern === 'Yes' && !form.medicationConcernNotes.trim()) return false;
   if (form.wellbeingConcerns.includes('Other') && !form.wellbeingOther.trim()) return false;
   if (form.followUpRequired !== 'No follow-up required' && !form.followUpDetails.trim()) return false;
@@ -713,6 +728,9 @@ function FinishVisitFormModal({
               <SingleChoice label="Was medication support required during this visit? *" value={form.medicationRequired} options={yesNoOptions} onChange={(medicationRequired) => update({ medicationRequired })} />
               {form.medicationRequired === 'Yes' && (
                 <SingleChoice label="Medication support status *" value={form.medicationStatus} options={medicationStatusOptions} onChange={(medicationStatus) => update({ medicationStatus })} />
+              )}
+              {form.medicationRequired === 'Yes' && form.medicationStatus && form.medicationStatus !== 'Completed' && (
+                <TextField label="Notes or reason for medication support status *" value={form.medicationConcernNotes} onChange={(medicationConcernNotes) => update({ medicationConcernNotes })} />
               )}
               <SingleChoice label="Were there any medication-related concerns?" value={form.medicationConcern} options={yesNoOptions} onChange={(medicationConcern) => update({ medicationConcern })} />
               {form.medicationConcern === 'Yes' && (
@@ -1269,6 +1287,7 @@ function AssistantTab({
 function CareDetailsPanel({
   patient,
   worker,
+  workerId,
   location,
   visit,
   status,
@@ -1285,9 +1304,12 @@ function CareDetailsPanel({
   onToggleTask,
   onToggleTaskIssueMenu,
   onTaskIssue,
+  medicationSupport,
+  onMedicationSupportSave,
 }: {
   patient: PatientInfo;
   worker: string;
+  workerId: string;
   location: string;
   visit: VisitContext;
   status: string;
@@ -1299,12 +1321,16 @@ function CareDetailsPanel({
   openIssueTaskId: string | null;
   selectedTaskId: string | null;
   tasks: CareTask[];
+  medicationSupport?: MedicationSupportRecord | null;
   alerts: RiskAlert[];
   onSelectTask: (task: CareTask) => void;
   onToggleTask: (task: CareTask) => void;
   onToggleTaskIssueMenu: (taskId: string) => void;
   onTaskIssue: (taskId: string, type: TaskIssueType) => void;
+  onMedicationSupportSave: (record: Omit<MedicationSupportRecord, 'id' | 'visitId'>) => void;
 }) {
+  const medicationTask = tasks.find((task) => task.type === 'medication');
+
   return (
     <View style={styles.tabPanel}>
       <SectionHeader title="Today’s care" detail="Simple checklist" />
@@ -1338,6 +1364,17 @@ function CareDetailsPanel({
         </View>
       </View>
 
+      {medicationTask && (
+        <MedicationSupportPanel
+          task={medicationTask}
+          patient={patient}
+          record={medicationSupport}
+          disabled={disabled || !visitStarted}
+          workerId={workerId}
+          onSave={onMedicationSupportSave}
+        />
+      )}
+
       <SectionHeader title="Things to watch" detail={`${alerts.length} noted`} />
       <View style={styles.alertStack}>
         {alerts.length === 0 ? (
@@ -1348,6 +1385,143 @@ function CareDetailsPanel({
       </View>
     </View>
   );
+}
+
+function MedicationSupportPanel({
+  task,
+  patient,
+  record,
+  workerId,
+  disabled,
+  onSave,
+}: {
+  task: CareTask;
+  patient: PatientInfo;
+  record?: MedicationSupportRecord | null;
+  workerId: string;
+  disabled: boolean;
+  onSave: (record: Omit<MedicationSupportRecord, 'id' | 'visitId'>) => void;
+}) {
+  const medicationNames = patient.medications?.length
+    ? patient.medications
+    : ['Medication list unavailable'];
+  const [status, setStatus] = useState<MedicationSupportStatus | ''>(record?.status ?? '');
+  const [notes, setNotes] = useState(record?.notes ?? '');
+  const [medicationItems, setMedicationItems] = useState<MedicationSupportItem[]>(() =>
+    createMedicationSupportItems(medicationNames, record?.medicationItems),
+  );
+
+  useEffect(() => {
+    setStatus(record?.status ?? '');
+    setNotes(record?.notes ?? '');
+    setMedicationItems(createMedicationSupportItems(medicationNames, record?.medicationItems));
+  }, [record?.status, record?.notes, record?.medicationItems, task.id, patient.medications]);
+
+  const notesRequired = Boolean(status && status !== 'Completed');
+  const medicationItemsComplete = medicationItems.every((item) => item.takenStatus);
+  const canSave = Boolean(status) && medicationItemsComplete && (!notesRequired || notes.trim().length > 0) && !disabled;
+  const timestampLabel = record?.timestamp ? formatShortTime(record.timestamp) : 'Not recorded';
+
+  const updateMedicationTakenStatus = (name: string, takenStatus: MedicationSupportItem['takenStatus']) => {
+    setMedicationItems((current) =>
+      current.map((item) => item.name === name ? { ...item, takenStatus } : item),
+    );
+  };
+
+  const handleSave = () => {
+    if (!canSave || !status) return;
+    onSave({
+      taskId: task.id,
+      status,
+      notes: notes.trim(),
+      timestamp: new Date().toISOString(),
+      hcwId: workerId,
+      medicationNames,
+      medicationItems,
+    });
+  };
+
+  return (
+    <>
+      <SectionHeader title="Medication support" detail={record ? `${record.status} · ${timestampLabel}` : 'Not recorded'} />
+      <View style={styles.medicationPanel}>
+        <Text style={styles.priorityLabel}>CURRENT MEDICATION RECORDS</Text>
+        <View style={styles.medicationItemList}>
+          {medicationItems.map((item) => (
+            <View key={item.name} style={styles.medicationItemRow}>
+              <Text style={styles.medicationName}>{item.name}</Text>
+              <View style={styles.medicationTakenOptions}>
+                {medicationTakenStatusOptions.map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    style={[styles.medicationTakenButton, item.takenStatus === option && styles.medicationTakenButtonActive]}
+                    onPress={() => updateMedicationTakenStatus(item.name, option)}
+                    disabled={disabled}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.medicationTakenText, item.takenStatus === option && styles.medicationTakenTextActive]}>{option}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+        <Text style={styles.taskDetail}>{task.dueAt ? `${task.dueAt} · ` : ''}{task.detail}</Text>
+        <SingleChoice
+          label="Medication support status *"
+          value={status}
+          options={medicationStatusOptions}
+          onChange={(nextStatus) => setStatus(nextStatus as MedicationSupportStatus)}
+        />
+        {notesRequired && (
+          <TextField
+            label="Notes or reason *"
+            value={notes}
+            onChange={setNotes}
+          />
+        )}
+        {!notesRequired && (
+          <TextField
+            label="Medication support notes"
+            value={notes}
+            onChange={setNotes}
+          />
+        )}
+        {record && (
+          <View style={styles.inlineLocationStatus}>
+            <Text style={styles.inlineLocationLabel}>Audit record</Text>
+            <Text style={styles.inlineLocationValue}>
+              Visit {record.visitId} · HCW {record.hcwId} · {formatShortTime(record.timestamp)}
+            </Text>
+          </View>
+        )}
+        {status && status !== 'Completed' && (
+          <Text style={styles.locationWarning}>
+            This status is available to follow-up rules, risk alerts, and VHA context.
+          </Text>
+        )}
+        {!medicationItemsComplete && (
+          <Text style={styles.locationWarning}>
+            Select whether each listed medication was taken before saving.
+          </Text>
+        )}
+        <View style={styles.singleActionRow}>
+          <ActionButton label="Save medication status" tone="success" onPress={handleSave} disabled={!canSave} />
+        </View>
+      </View>
+    </>
+  );
+}
+
+function createMedicationSupportItems(
+  medicationNames: string[],
+  existingItems?: MedicationSupportItem[],
+): MedicationSupportItem[] {
+  const existingByName = new Map((existingItems ?? []).map((item) => [item.name, item.takenStatus]));
+  return medicationNames.map((name) => ({
+    name,
+    takenStatus: existingByName.get(name),
+  }));
 }
 
 function VisitQueueModal({
@@ -1714,6 +1888,40 @@ const styles = StyleSheet.create({
   flagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 12 },
   flagChip: { backgroundColor: '#E6EFEA', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 },
   flagText: { color: '#2E6F73', fontSize: 11, fontWeight: '700' },
+  medicationPanel: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    padding: 12,
+    gap: 10,
+    marginBottom: 12,
+  },
+  medicationList: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  medicationChip: { backgroundColor: '#EEF7F1', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5 },
+  medicationChipText: { color: '#2D6A4F', fontSize: 11, fontWeight: '800' },
+  medicationItemList: { gap: 8 },
+  medicationItemRow: {
+    backgroundColor: '#F7FAF8',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    padding: 10,
+    gap: 8,
+  },
+  medicationName: { color: '#16231E', fontSize: 13, fontWeight: '900', lineHeight: 18 },
+  medicationTakenOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  medicationTakenButton: {
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#C9D7D1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  medicationTakenButtonActive: { backgroundColor: '#2E6F73', borderColor: '#2E6F73' },
+  medicationTakenText: { color: '#3D4E47', fontSize: 11, fontWeight: '900' },
+  medicationTakenTextActive: { color: '#FFFFFF' },
   alertStack: { gap: 8 },
   alertCard: { borderRadius: 8, borderLeftWidth: 5, padding: 12, backgroundColor: '#FFFFFF' },
   alertHigh: { borderLeftColor: '#A83B32', backgroundColor: '#FFF5F3' },

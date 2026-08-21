@@ -6,6 +6,7 @@ import {
   IncidentChecklistItem,
   LocationPermissionStatus,
   LocationSnapshot,
+  MedicationSupportRecord,
   PatientInfo,
   RiskAlert,
   ScenarioEvent,
@@ -22,6 +23,7 @@ import {
   finishVisit,
   reportTaskIssue as reportTaskIssueApi,
   startVisit as startVisitApi,
+  updateMedicationSupport as updateMedicationSupportApi,
   updatePatientProfile,
   updateTaskStatus,
 } from '../services/api';
@@ -132,6 +134,62 @@ function applyLocalTaskStatus(
     events: medicationCompleted
       ? [...current.events, createEvent('medication_given')]
       : current.events,
+  };
+}
+
+function medicationSupportAlert(record: MedicationSupportRecord): RiskAlert | null {
+  if (record.status === 'Completed') return null;
+  return {
+    id: `local-medication-support-${Date.now()}`,
+    level: record.status === 'Delayed' || record.status === 'Unable to Confirm' ? 'high' : 'moderate',
+    title: 'Medication support needs follow-up',
+    message: `${record.status}: ${record.notes || 'No reason recorded.'}`,
+    source: 'rules',
+  };
+}
+
+function medicationSupportVisitStatus(status: MedicationSupportRecord['status']): VisitStatus {
+  if (status === 'Completed') return 'in_progress';
+  if (status === 'Delayed' || status === 'Unable to Confirm') return 'delayed';
+  return 'follow_up_required';
+}
+
+function medicationSupportEventType(status: MedicationSupportRecord['status']): ScenarioEvent['type'] {
+  return status === 'Completed' ? 'medication_given' : status === 'Delayed' ? 'medication_delayed' : 'follow_up_required';
+}
+
+function applyLocalMedicationSupport(
+  current: ScenarioContext,
+  record: Omit<MedicationSupportRecord, 'id' | 'visitId'>,
+): ScenarioContext {
+  const medicationTask = current.tasks.find((task) => task.type === 'medication');
+  const nextRecord: MedicationSupportRecord = {
+    ...record,
+    visitId: current.visit.id,
+    taskId: record.taskId ?? medicationTask?.id,
+  };
+  const alert = medicationSupportAlert(nextRecord);
+  const status = medicationSupportVisitStatus(nextRecord.status);
+  return {
+    ...current,
+    medicationSupport: nextRecord,
+    lifecycleStep: nextRecord.status === 'Completed' ? 'care_tasks' : 'review',
+    visit: {
+      ...current.visit,
+      status: current.visit.status === 'completed' ? current.visit.status : status,
+    },
+    tasks: current.tasks.map((task) =>
+      task.id === (nextRecord.taskId ?? medicationTask?.id)
+        ? { ...task, status: 'completed' }
+        : task,
+    ),
+    events: [
+      ...current.events,
+      createEvent(medicationSupportEventType(nextRecord.status), `${nextRecord.status}: ${nextRecord.notes ?? ''}`.trim()),
+    ],
+    alerts: alert
+      ? [...current.alerts, alert]
+      : current.alerts.filter((item) => item.title !== 'Medication support needs follow-up'),
   };
 }
 
@@ -451,6 +509,15 @@ export function useScenarioStore() {
     );
   }, [runMutation, scenario.visit.id, scenario.worker.id]);
 
+  const updateMedicationSupport = useCallback((
+    record: Omit<MedicationSupportRecord, 'id' | 'visitId'>,
+  ) => {
+    return runMutation(() =>
+      updateMedicationSupportApi(scenario.visit.id, record),
+      (current) => applyLocalMedicationSupport(current, record),
+    );
+  }, [runMutation, scenario.visit.id]);
+
   const requestLocationSnapshot = useCallback(async (
     type: LocationSnapshot['type'],
     note?: string,
@@ -550,6 +617,7 @@ export function useScenarioStore() {
     manualLocationCheckOut,
     completeVisit,
     updateTask,
+    updateMedicationSupport,
     toggleIncidentCheck: undefined,
     updatePatient,
     selectVisit,

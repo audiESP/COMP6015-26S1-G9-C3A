@@ -22,6 +22,25 @@ class VisitRepositoryUnavailable(VisitRepositoryError):
     """Raised when the database is not configured."""
 
 
+class VisitValidationError(VisitRepositoryError):
+    """Raised when a visit workflow payload is invalid."""
+
+
+MEDICATION_SUPPORT_STATUSES = {
+    "Completed",
+    "Delayed",
+    "Declined",
+    "Unavailable",
+    "Unable to Confirm",
+}
+
+MEDICATION_TAKEN_STATUSES = {
+    "Taken",
+    "Not Taken",
+    "Unable to Confirm",
+}
+
+
 class VisitRepository:
     def __init__(self):
         self.database_url = os.getenv("DATABASE_URL", "").strip()
@@ -266,6 +285,119 @@ class VisitRepository:
                 self._upsert_alert(cursor, visit_id, alert, event_id)
                 return self._get_scenario(cursor, visit_id)
 
+    def update_medication_support(self, visit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        status = payload.get("status")
+        notes = (payload.get("notes") or "").strip()
+        if status not in MEDICATION_SUPPORT_STATUSES:
+            raise VisitValidationError("Medication support status is not supported")
+        if status != "Completed" and not notes:
+            raise VisitValidationError("Notes or reasons are required when medication support is not completed")
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                visit = self._visit_row_for_update(cursor, visit_id)
+                task_id = payload.get("taskId") or self._task_id_by_key(cursor, visit_id, "medication")
+                if not task_id:
+                    raise VisitValidationError("This visit does not have a medication support task")
+                medication_names = payload.get("medicationNames") or self._patient_medications_for_visit(cursor, visit_id)
+                medication_items = _normalise_medication_items(payload.get("medicationItems"), medication_names)
+                worker_id = payload.get("hcwId") or visit["worker_id"]
+                recorded_at = payload.get("timestamp") or datetime.utcnow()
+                cursor.execute(
+                    """
+                    insert into c3a_app_medication_support_records (
+                        visit_id,
+                        task_id,
+                        hcw_id,
+                        status,
+                        notes,
+                        recorded_at,
+                        medication_names,
+                        medication_items,
+                        updated_at
+                    )
+                    values (
+                        %(visit_id)s,
+                        %(task_id)s,
+                        %(hcw_id)s,
+                        %(status)s,
+                        %(notes)s,
+                        %(recorded_at)s,
+                        %(medication_names)s::jsonb,
+                        %(medication_items)s::jsonb,
+                        now()
+                    )
+                    on conflict (visit_id) do update
+                    set task_id = excluded.task_id,
+                        hcw_id = excluded.hcw_id,
+                        status = excluded.status,
+                        notes = excluded.notes,
+                        recorded_at = excluded.recorded_at,
+                        medication_names = excluded.medication_names,
+                        medication_items = excluded.medication_items,
+                        updated_at = now()
+                    """,
+                    {
+                        "visit_id": visit_id,
+                        "task_id": task_id,
+                        "hcw_id": worker_id,
+                        "status": status,
+                        "notes": notes or None,
+                        "recorded_at": recorded_at,
+                        "medication_names": _json_array(medication_names),
+                        "medication_items": _json_array(medication_items),
+                    },
+                )
+                cursor.execute(
+                    """
+                    update c3a_app_care_tasks
+                    set status = 'completed',
+                        completed_at = coalesce(completed_at, now()),
+                        status_note = %s,
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (f"Medication support status: {status}" + (f" - {notes}" if notes else ""), task_id),
+                )
+                visit_status, lifecycle = _medication_support_visit_state(status, visit["status"], visit["lifecycle_step"])
+                cursor.execute(
+                    """
+                    update c3a_app_visits
+                    set status = %s,
+                        lifecycle_step = %s,
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (visit_status, lifecycle, visit_id),
+                )
+                event_id = self._insert_event(
+                    cursor,
+                    visit_id,
+                    _medication_support_event_type(status),
+                    worker_id,
+                    task_id=task_id,
+                    note=f"{status}: {notes}" if notes else status,
+                )
+                if status != "Completed":
+                    self._upsert_alert(
+                        cursor,
+                        visit_id,
+                        _medication_support_alert(status, notes),
+                        event_id,
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        update c3a_app_risk_alerts
+                        set status = 'resolved',
+                            updated_at = now()
+                        where visit_id = %s
+                          and alert_key = 'medication-support-follow-up'
+                        """,
+                        (visit_id,),
+                    )
+                return self._get_scenario(cursor, visit_id)
+
     def complete_visit(self, visit_id: str, worker_id: str | None, snapshot: dict[str, Any] | None) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -376,6 +508,11 @@ class VisitRepository:
                 select ls.*
                 from c3a_app_location_snapshots ls
                 where ls.visit_id = %s
+            ),
+            medication_support_row as (
+                select ms.*
+                from c3a_app_medication_support_records ms
+                where ms.visit_id = %s
             )
             select v.id::text,
                    v.patient_id::text,
@@ -527,13 +664,29 @@ class VisitRepository:
                            from snapshot_rows ls
                        ),
                        '{}'::jsonb
-                   ) as snapshots
+                   ) as snapshots,
+                   (
+                       select jsonb_strip_nulls(
+                           jsonb_build_object(
+                               'id', ms.id::text,
+                               'visitId', ms.visit_id::text,
+                               'taskId', ms.task_id::text,
+                               'status', ms.status,
+                               'notes', ms.notes,
+                               'timestamp', to_jsonb(ms.recorded_at),
+                               'hcwId', ms.hcw_id,
+                               'medicationNames', ms.medication_names,
+                               'medicationItems', ms.medication_items
+                           )
+                       )
+                       from medication_support_row ms
+                   ) as medication_support
             from visit_row v
             join c3a_synthea_patients p on p.id = v.patient_id
             left join c3a_synthea_cald_profiles cp on cp.patient_id = p.id
             left join c3a_app_patient_profiles pf on pf.patient_id = p.id
             """,
-            (visit_id, visit_id, visit_id, visit_id, visit_id),
+            (visit_id, visit_id, visit_id, visit_id, visit_id, visit_id),
         )
         row = cursor.fetchone()
         if not row:
@@ -575,6 +728,11 @@ class VisitRepository:
             key: _normalise_timestamp_item(value)
             for key, value in (row["snapshots"] or {}).items()
         }
+        medication_support = (
+            _normalise_timestamp_item(row["medication_support"])
+            if row["medication_support"]
+            else None
+        )
         visit_context = {
             "id": row["id"],
             "patientId": row["patient_id"],
@@ -594,6 +752,7 @@ class VisitRepository:
             "visit": {key: value for key, value in visit_context.items() if value is not None},
             "lifecycleStep": row["lifecycle_step"],
             "tasks": tasks,
+            "medicationSupport": medication_support,
             "events": events,
             "alerts": alerts,
             "incidentChecklist": _incident_checklist(events),
@@ -626,6 +785,32 @@ class VisitRepository:
         cursor.execute("select type from c3a_app_care_tasks where id = %s", (task_id,))
         row = cursor.fetchone()
         return row["type"] if row else None
+
+    def _patient_medications_for_visit(self, cursor, visit_id: str) -> list[str]:
+        cursor.execute(
+            """
+            select coalesce(
+                       pf.medications_override,
+                       (
+                           select jsonb_agg(description order by description)
+                           from (
+                               select description
+                               from c3a_synthea_medications m
+                               where m.patient_id = v.patient_id
+                               order by coalesce(m.stop_at, m.start_at) desc nulls last, description
+                               limit 8
+                           ) meds
+                       ),
+                       '[]'::jsonb
+                   ) as medications
+            from c3a_app_visits v
+            left join c3a_app_patient_profiles pf on pf.patient_id = v.patient_id
+            where v.id = %s
+            """,
+            (visit_id,),
+        )
+        row = cursor.fetchone()
+        return _list_or_default(row["medications"] if row else [], [])
 
     def _latest_visit_for_patient(self, cursor, patient_id: str) -> str | None:
         cursor.execute(
@@ -1036,6 +1221,62 @@ def _issue_note(task: dict[str, Any], issue_type: str) -> str:
     if issue_type == "safety_concern":
         return f"{task['label']}: safety concern"
     return f"{task['label']}: could not complete"
+
+
+def _medication_support_event_type(status: str) -> str:
+    if status == "Completed":
+        return "medication_given"
+    if status == "Delayed":
+        return "medication_delayed"
+    return "follow_up_required"
+
+
+def _medication_support_visit_state(status: str, current_status: str, current_lifecycle: str) -> tuple[str, str]:
+    if current_status == "completed":
+        return current_status, current_lifecycle
+    if status == "Completed":
+        if current_status in {"scheduled", "arrived", "delayed", "follow_up_required"}:
+            return "in_progress", "care_tasks"
+        return current_status, "care_tasks"
+    if status in {"Delayed", "Unable to Confirm"}:
+        return "delayed", "review"
+    return "follow_up_required", "review"
+
+
+def _medication_support_alert(status: str, notes: str) -> dict[str, str]:
+    level = "high" if status in {"Delayed", "Unable to Confirm"} else "moderate"
+    return {
+        "alert_key": "medication-support-follow-up",
+        "level": level,
+        "title": "Medication support needs follow-up",
+        "message": f"{status}: {notes}",
+    }
+
+
+def _normalise_medication_items(items: Any, medication_names: list[str]) -> list[dict[str, str]]:
+    by_name = {}
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            taken_status = str(item.get("takenStatus") or "").strip()
+            if name:
+                by_name[name] = taken_status
+
+    result = []
+    for name in medication_names:
+        clean_name = str(name).strip()
+        if not clean_name:
+            continue
+        taken_status = by_name.get(clean_name, "")
+        if taken_status not in MEDICATION_TAKEN_STATUSES:
+            raise VisitValidationError(f"Medication taken status is required for {clean_name}")
+        result.append({"name": clean_name, "takenStatus": taken_status})
+
+    if not result:
+        raise VisitValidationError("At least one medication must be listed for medication support")
+    return result
 
 
 def _location_event_type(snapshot: dict[str, Any], is_check_in: bool) -> str:
