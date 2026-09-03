@@ -342,6 +342,28 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertEqual(body["sources"], [])
         self.assertNotIn("## Retrieved Clinical Evidence", self.service.last_rag_context)
 
+    def test_risk_analysis_requires_confirmation_and_returns_boundary(self):
+        self.service.generate_reply = self._risk_reply
+        response = self.client.post(
+            "/ai/risk/analyse",
+            json={"note": "The medication was not available at the visit."},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["suggestions"][0]["riskType"], "medication_unavailable")
+        self.assertTrue(body["suggestions"][0]["requiresConfirmation"])
+        self.assertFalse(body["safetyBoundary"]["diagnosisMade"])
+        self.assertFalse(body["safetyBoundary"]["medicationChangeSuggested"])
+
+    async def _risk_reply(self, **kwargs):
+        return (
+            '{"suggestions":[{"riskType":"medication_unavailable",'
+            '"level":"high","confidence":0.94,"reason":"Medication was not available",'
+            '"recommendedActions":["Record the issue","Contact the supervisor"],'
+            '"requiresConfirmation":false}]}'
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

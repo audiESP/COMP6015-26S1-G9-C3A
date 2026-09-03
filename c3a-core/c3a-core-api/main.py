@@ -41,6 +41,8 @@ from app.schemas import (
     MedicationSupportRequest,
     PatientSummaryResponse,
     ScenarioResponse,
+    RiskAnalysisRequest,
+    RiskAnalysisResponse,
     ShiftSummaryResponse,
     StartVisitRequest,
     TaskIssueRequest,
@@ -329,6 +331,17 @@ async def patient_summary(patient_id: str, request: Request):
         len(payload.get("summary", "")),
     )
     return PatientSummaryResponse(summary=payload.get("summary", ""), patientId=patient_id)
+
+
+@app.post("/ai/risk/analyse", response_model=RiskAnalysisResponse)
+async def analyse_risk(req: RiskAnalysisRequest, request: Request):
+    try:
+        return await ai_client.analyse_risk(
+            req,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except AiServiceUnavailable as exc:
+        raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 
 
 @app.post("/chat", response_model=ChatResponse)
