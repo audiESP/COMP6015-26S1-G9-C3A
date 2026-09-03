@@ -142,6 +142,7 @@ export type MedicationTakenStatus = 'Taken' | 'Not Taken' | 'Unable to Confirm';
 export interface MedicationSupportItem {
   name: string;
   takenStatus?: MedicationTakenStatus;
+  takenAt?: string;
 }
 
 export interface MedicationSupportRecord {

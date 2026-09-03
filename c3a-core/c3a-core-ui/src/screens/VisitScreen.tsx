@@ -45,12 +45,14 @@ interface Props {
   apiBaseUrl?: string;
 }
 
-type VisitSection = 'assistant' | 'care';
+type VisitSection = 'tasks' | 'patient' | 'assistant' | 'summary';
 type TaskIssueType = 'cannot_complete' | 'patient_declined' | 'safety_concern';
 
 const sections: { id: VisitSection; label: string }[] = [
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'patient', label: 'Patient' },
   { id: 'assistant', label: 'Assistant' },
-  { id: 'care', label: 'Care Plan' },
+  { id: 'summary', label: 'Summary' },
 ];
 
 const emptyCareOutcomeForm: CareOutcomeFormAnswers = {
@@ -154,7 +156,7 @@ const stepLabels: Record<VisitLifecycleStep, string> = {
 
 export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const scrollRef = useRef<ScrollView>(null);
-  const [activeSection, setActiveSection] = useState<VisitSection>('assistant');
+  const [activeSection, setActiveSection] = useState<VisitSection>('tasks');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [issueActionsOpen, setIssueActionsOpen] = useState(false);
   const [taskIssueMenuOpen, setTaskIssueMenuOpen] = useState<string | null>(null);
@@ -288,12 +290,12 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     setIssueActionsOpen(false);
     setTaskIssueMenuOpen(null);
     await reportTaskIssue(selectedTask.id, type);
-    setActiveSection('care');
+    setActiveSection('tasks');
   };
 
   const handleSelectTask = useCallback((task: CareTask) => {
     setSelectedTaskId(task.id);
-    setActiveSection('care');
+    setActiveSection('tasks');
   }, []);
 
   const handleToggleTask = useCallback((task: CareTask) => {
@@ -312,7 +314,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
       ? undefined
       : await requestLocationCheckIn('Arrival recorded when starting the visit.');
     await startVisit(checkIn);
-    setActiveSection('care');
+    setActiveSection('tasks');
   }, [isCompleted, requestLocationCheckIn, scenario.visit.checkIn, startVisit, workflowSaving]);
 
   const handleOpenFinishVisitForm = useCallback(() => {
@@ -359,7 +361,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     if (workflowSaving) return;
     setTaskIssueMenuOpen(null);
     await reportTaskIssue(taskId, type);
-    setActiveSection('care');
+    setActiveSection('tasks');
   };
 
   const handleMedicationSupportSave = useCallback((record: Omit<MedicationSupportRecord, 'id' | 'visitId'>) => {
@@ -373,7 +375,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     startNewChat();
     setPendingAttachments([]);
     setShiftSummaryOpen(false);
-    setActiveSection('assistant');
+    setActiveSection('tasks');
   };
 
   const handleSelectVisit = (id: string) => {
@@ -383,7 +385,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     setPendingAttachments([]);
     setQueueOpen(false);
     setShiftSummaryOpen(false);
-    setActiveSection('assistant');
+    setActiveSection('tasks');
   };
 
   const handleAskAi = () => {
@@ -440,10 +442,6 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
 
           {priorityAlert && <PriorityAlert alert={priorityAlert} />}
 
-          <LocationCheckCard
-            visit={scenario.visit}
-          />
-
           <CurrentTaskCard
             task={selectedTask ?? currentTask}
             nextStep={nextStep}
@@ -454,7 +452,6 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             isLastVisit={isLastVisit}
             visitStarted={visitStarted}
             currentTask={selectedTask ?? currentTask}
-            tasks={scenario.tasks}
             openTaskCount={openTasks.length}
             incompleteRequiredTaskCount={incompleteRequiredTaskCount}
             canFinish={canFinishVisit}
@@ -463,23 +460,16 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             issueActionsOpen={issueActionsOpen}
             onStartVisit={handleStartVisitWithCheckIn}
             onCompleteTask={handleCompleteSelectedTask}
-            onToggleTask={handleToggleTask}
-            onSelectTask={handleSelectTask}
             onToggleIssueActions={() => setIssueActionsOpen((value) => !value)}
             onIssue={handleIssue}
             onAskAi={handleAskAi}
             onCompleteVisit={handleOpenFinishVisitForm}
             onNextPatient={handleNextPatient}
-            onShiftSummary={() => setShiftSummaryOpen((value) => !value)}
+            onShiftSummary={() => {
+              setShiftSummaryOpen((value) => !value);
+              setActiveSection('summary');
+            }}
           />
-
-          {shiftSummaryOpen && (
-            <ShiftSummary
-              total={visitQueue.length}
-              completed={Math.min(visitQueue.length, visitsCompleted + (currentVisitCounted ? 1 : 0))}
-              followUps={followUpCount}
-            />
-          )}
 
           <View style={styles.tabBar}>
             {sections.map((section) => (
@@ -496,22 +486,51 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             ))}
           </View>
 
-          {activeSection === 'assistant' ? (
+          {activeSection === 'tasks' && (
+            <TasksPanel
+              tasks={scenario.tasks}
+              patient={scenario.patient}
+              workerId={scenario.worker.id}
+              workerName={scenario.worker.name}
+              medicationSupport={scenario.medicationSupport}
+              visitStarted={visitStarted}
+              disabled={workflowSaving}
+              selectedTaskId={selectedTaskId}
+              openIssueTaskId={taskIssueMenuOpen}
+              onSelectTask={handleSelectTask}
+              onToggleTask={handleToggleTask}
+              onToggleTaskIssueMenu={(taskId) =>
+                setTaskIssueMenuOpen((current) => (current === taskId ? null : taskId))
+              }
+              onTaskIssue={handleTaskIssue}
+              onMedicationSupportSave={handleMedicationSupportSave}
+            />
+          )}
+
+          {activeSection === 'patient' && (
+            <PatientDetailsPanel
+              patient={scenario.patient}
+              worker={scenario.worker.name}
+              location={scenario.visit.location}
+              alerts={activeAlerts}
+            />
+          )}
+
+          {activeSection === 'assistant' && (
             <AssistantTab
               error={chatError}
               messages={messages}
               isLoading={chatLoading}
               contextLabel={`${scenario.patient.name} · ${stepLabels[scenario.lifecycleStep]} · ${currentTask.label}`}
+              patientLanguage={scenario.patient.preferredLanguage ?? 'the patient preferred language'}
               onSuggestedQuestion={handleSend}
               onOpenHistory={() => setHistoryOpen(true)}
               onEditPatient={() => setPatientModalOpen(true)}
             />
-          ) : (
-            <CareDetailsPanel
-              patient={scenario.patient}
-              worker={scenario.worker.name}
-              workerId={scenario.worker.id}
-              location={scenario.visit.location}
+          )}
+
+          {activeSection === 'summary' && (
+            <VisitSummaryPanel
               status={statusLabels[scenario.visit.status]}
               lifecycle={stepLabels[scenario.lifecycleStep]}
               completed={`${completedTasks}/${scenario.tasks.length}`}
@@ -520,21 +539,11 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
                   ? 'Follow-up needed'
                   : 'No follow-up noted'
               }
-              visitStarted={visitStarted}
-              disabled={workflowSaving}
-              tasks={scenario.tasks}
-              medicationSupport={scenario.medicationSupport}
-              alerts={activeAlerts}
               visit={scenario.visit}
-              selectedTaskId={selectedTaskId}
-              onSelectTask={handleSelectTask}
-              onToggleTask={handleToggleTask}
-              openIssueTaskId={taskIssueMenuOpen}
-              onToggleTaskIssueMenu={(taskId) =>
-                setTaskIssueMenuOpen((current) => (current === taskId ? null : taskId))
-              }
-              onTaskIssue={handleTaskIssue}
-              onMedicationSupportSave={handleMedicationSupportSave}
+              shiftSummaryOpen={shiftSummaryOpen}
+              totalVisits={visitQueue.length}
+              completedVisits={Math.min(visitQueue.length, visitsCompleted + (currentVisitCounted ? 1 : 0))}
+              followUpCount={followUpCount}
             />
           )}
         </ScrollView>
@@ -1019,7 +1028,6 @@ function SimpleVisitActions({
   isLastVisit,
   visitStarted,
   currentTask,
-  tasks,
   openTaskCount,
   incompleteRequiredTaskCount,
   canFinish,
@@ -1028,8 +1036,6 @@ function SimpleVisitActions({
   issueActionsOpen,
   onStartVisit,
   onCompleteTask,
-  onToggleTask,
-  onSelectTask,
   onToggleIssueActions,
   onIssue,
   onAskAi,
@@ -1041,7 +1047,6 @@ function SimpleVisitActions({
   isLastVisit: boolean;
   visitStarted: boolean;
   currentTask: CareTask;
-  tasks: CareTask[];
   openTaskCount: number;
   incompleteRequiredTaskCount: number;
   canFinish: boolean;
@@ -1050,8 +1055,6 @@ function SimpleVisitActions({
   issueActionsOpen: boolean;
   onStartVisit: () => void;
   onCompleteTask: () => void;
-  onToggleTask: (task: CareTask) => void;
-  onSelectTask: (task: CareTask) => void;
   onToggleIssueActions: () => void;
   onIssue: (type: TaskIssueType) => void;
   onAskAi: () => void;
@@ -1115,42 +1118,6 @@ function SimpleVisitActions({
         </View>
       )}
 
-      <View style={styles.taskListInline}>
-        <Text style={styles.priorityLabel}>ALL TASKS</Text>
-        {tasks.map((task) => {
-          const isDone = task.status === 'completed';
-          const hasIssue = task.status === 'issue' || task.status === 'delayed' || task.status === 'skipped';
-          return (
-            <View key={task.id} style={[styles.taskRowContainer, disabled && styles.taskRowDisabled, task.id === currentTask.id && styles.taskRowSelected]}>
-              <View style={styles.taskRow}>
-                <TouchableOpacity
-                  style={styles.taskContentButton}
-                  onPress={() => onSelectTask(task)}
-                  activeOpacity={0.8}
-                  disabled={disabled}
-                >
-                  <View style={[styles.taskCheck, isDone && styles.taskCheckDone, hasIssue && styles.taskCheckIssue]}>
-                    <Text style={styles.taskCheckText}>{isDone ? '✓' : hasIssue ? '!' : ''}</Text>
-                  </View>
-                  <View style={styles.taskCopy}>
-                    <Text style={styles.taskLabel}>{task.label}</Text>
-                    <Text style={styles.taskDetail}>{task.dueAt ? `${task.dueAt} · ` : ''}{task.detail}</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.taskActionButton, isDone && styles.taskActionButtonDone, disabled && styles.taskActionButtonDisabled]}
-                  onPress={() => onToggleTask(task)}
-                  disabled={disabled}
-                  activeOpacity={0.75}
-                >
-                  <Text style={[styles.taskActionText, disabled && styles.taskActionTextDisabled]}>{isDone ? 'Undo' : 'Done'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })}
-      </View>
-
       <View style={styles.finishBox}>
         <View style={styles.finishCopy}>
           <Text style={styles.finishText}>Finished the visit?</Text>
@@ -1211,6 +1178,7 @@ function AssistantTab({
   messages,
   isLoading,
   contextLabel,
+  patientLanguage,
   onSuggestedQuestion,
   onOpenHistory,
   onEditPatient,
@@ -1219,10 +1187,28 @@ function AssistantTab({
   messages: Message[];
   isLoading: boolean;
   contextLabel: string;
+  patientLanguage: string;
   onSuggestedQuestion: (text: string, attachments: Attachment[]) => void;
   onOpenHistory: () => void;
   onEditPatient: () => void;
 }) {
+  const [translationText, setTranslationText] = useState('');
+  const commonPhrases = [
+    'I am here for your scheduled care visit.',
+    'Do you have any pain or discomfort today?',
+    'I am going to help with your medication now.',
+  ];
+
+  const requestTranslation = (sourceText: string) => {
+    const cleanText = sourceText.trim();
+    if (!cleanText) return;
+    onSuggestedQuestion(
+      `Translate this care-worker message into ${patientLanguage}. Keep it clear, respectful, and easy for an older patient to understand: "${cleanText}"`,
+      [],
+    );
+    setTranslationText('');
+  };
+
   return (
     <View style={styles.tabPanel}>
       <View style={styles.assistantToolbar}>
@@ -1254,6 +1240,42 @@ function AssistantTab({
           </TouchableOpacity>
         </View>
       </View>
+
+      <View style={styles.translatePanel}>
+        <View style={styles.sectionHeaderCompact}>
+          <Text style={styles.sectionTitle}>Translate</Text>
+          <Text style={styles.sectionDetail}>{patientLanguage}</Text>
+        </View>
+        <TextInput
+          style={[styles.textInput, styles.translateInput]}
+          value={translationText}
+          onChangeText={setTranslationText}
+          placeholder="Type what you want to say to the patient"
+          placeholderTextColor="#8A9B93"
+          multiline
+        />
+        <View style={styles.quickActionBar}>
+          <ActionButton
+            label="Translate"
+            onPress={() => requestTranslation(translationText)}
+            disabled={!translationText.trim() || isLoading}
+          />
+        </View>
+        <View style={styles.phraseGrid}>
+          {commonPhrases.map((phrase) => (
+            <TouchableOpacity
+              key={phrase}
+              style={styles.phraseButton}
+              onPress={() => requestTranslation(phrase)}
+              disabled={isLoading}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.phraseText}>{phrase}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
       <View style={styles.chatPanel}>
         {error && (
           <View style={styles.errorBanner}>
@@ -1284,18 +1306,11 @@ function AssistantTab({
   );
 }
 
-function CareDetailsPanel({
+function TasksPanel({
   patient,
-  worker,
   workerId,
-  location,
-  visit,
-  status,
-  lifecycle,
-  completed,
-  followUp,
+  workerName,
   tasks,
-  alerts,
   visitStarted,
   disabled,
   openIssueTaskId,
@@ -1308,21 +1323,14 @@ function CareDetailsPanel({
   onMedicationSupportSave,
 }: {
   patient: PatientInfo;
-  worker: string;
   workerId: string;
-  location: string;
-  visit: VisitContext;
-  status: string;
-  lifecycle: string;
-  completed: string;
-  followUp: string;
+  workerName: string;
   visitStarted: boolean;
   disabled: boolean;
   openIssueTaskId: string | null;
   selectedTaskId: string | null;
   tasks: CareTask[];
   medicationSupport?: MedicationSupportRecord | null;
-  alerts: RiskAlert[];
   onSelectTask: (task: CareTask) => void;
   onToggleTask: (task: CareTask) => void;
   onToggleTaskIssueMenu: (taskId: string) => void;
@@ -1330,38 +1338,25 @@ function CareDetailsPanel({
   onMedicationSupportSave: (record: Omit<MedicationSupportRecord, 'id' | 'visitId'>) => void;
 }) {
   const medicationTask = tasks.find((task) => task.type === 'medication');
+  const completedCount = tasks.filter((task) => task.status === 'completed').length;
 
   return (
     <View style={styles.tabPanel}>
-      <SectionHeader title="Today’s care" detail="Simple checklist" />
-      <View style={styles.summaryPanel}>
-        <SummaryLine label="Visit" value={status} />
-        <SummaryLine label="Stage" value={lifecycle} />
-        <SummaryLine label="Progress" value={completed} />
-        <SummaryLine label="Follow-up" value={followUp} />
-        <SummaryLine label="Check-in" value={visit.checkIn ? locationSnapshotSummary(visit.checkIn) : 'Not recorded'} />
-        <SummaryLine label="Check-out" value={visit.checkOut ? locationSnapshotSummary(visit.checkOut) : 'Not recorded'} />
-      </View>
-
-      <SectionHeader title="What to keep in mind" detail="Patient needs" />
-      <View style={styles.contextPanel}>
-        <SummaryLine label="Language" value={`${patient.preferredLanguage ?? 'Unknown'}${patient.interpreterRequired ? ' · interpreter recommended' : ''}`} />
-        <SummaryLine label="Mobility" value={patient.mobilitySupport ?? 'Not recorded'} />
-        <SummaryLine label="Communication" value={patient.communicationNotes ?? 'Not recorded'} />
-        <SummaryLine label="Dietary" value={patient.dietaryNotes ?? 'Not recorded'} />
-        <SummaryLine label="Diagnosis" value={patient.diagnosis ?? 'Not recorded'} />
-        <SummaryLine label="Past medical history" value={patient.pastMedicalHistory ?? 'Not recorded'} />
-        <SummaryLine label="Culture" value={patient.culturalBackground ?? 'Not recorded'} />
-        <SummaryLine label="Cognition" value={patient.cognitiveStatus ?? 'Not recorded'} />
-        <SummaryLine label="Worker" value={worker} />
-        <SummaryLine label="Visit" value={location} />
-        <View style={styles.flagRow}>
-          {patient.careRiskFlags?.map((flag) => (
-            <View key={flag} style={styles.flagChip}>
-              <Text style={styles.flagText}>{flag}</Text>
-            </View>
-          ))}
-        </View>
+      <SectionHeader title="Today’s tasks" detail={`${completedCount}/${tasks.length} complete`} />
+      <View style={styles.taskList}>
+        {tasks.map((task) => (
+          <TaskRow
+            key={task.id}
+            task={task}
+            isSelected={task.id === selectedTaskId}
+            disabled={disabled}
+            issueMenuOpen={openIssueTaskId === task.id}
+            onSelect={() => onSelectTask(task)}
+            onDone={() => onToggleTask(task)}
+            onToggleIssue={() => onToggleTaskIssueMenu(task.id)}
+            onIssue={(type) => onTaskIssue(task.id, type)}
+          />
+        ))}
       </View>
 
       {medicationTask && (
@@ -1371,9 +1366,52 @@ function CareDetailsPanel({
           record={medicationSupport}
           disabled={disabled || !visitStarted}
           workerId={workerId}
+          workerName={workerName}
           onSave={onMedicationSupportSave}
         />
       )}
+    </View>
+  );
+}
+
+function PatientDetailsPanel({
+  patient,
+  worker,
+  location,
+  alerts,
+}: {
+  patient: PatientInfo;
+  worker: string;
+  location: string;
+  alerts: RiskAlert[];
+}) {
+  return (
+    <View style={styles.tabPanel}>
+      <SectionHeader title="Must know" detail="Care preferences" />
+      <View style={styles.contextPanel}>
+        <SummaryLine label="Language" value={`${patient.preferredLanguage ?? 'Unknown'}${patient.interpreterRequired ? ' · interpreter recommended' : ''}`} />
+        <SummaryLine label="Mobility" value={patient.mobilitySupport ?? 'Not recorded'} />
+        <SummaryLine label="Communication" value={patient.communicationNotes ?? 'Not recorded'} />
+        <SummaryLine label="Dietary" value={patient.dietaryNotes ?? 'Not recorded'} />
+        <View style={styles.flagRow}>
+          {(patient.careRiskFlags?.length ? patient.careRiskFlags : ['No risk flags recorded']).map((flag) => (
+            <View key={flag} style={styles.flagChip}>
+              <Text style={styles.flagText}>{flag}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      <SectionHeader title="Clinical context" detail="Patient details" />
+      <View style={styles.contextPanel}>
+        <SummaryLine label="Diagnosis" value={patient.diagnosis ?? 'Not recorded'} />
+        <SummaryLine label="History" value={patient.pastMedicalHistory ?? 'Not recorded'} />
+        <SummaryLine label="Cognition" value={patient.cognitiveStatus ?? 'Not recorded'} />
+        <SummaryLine label="Culture" value={patient.culturalBackground ?? 'Not recorded'} />
+        <SummaryLine label="Allergies" value={patient.allergies?.length ? patient.allergies.join(', ') : 'Not recorded'} />
+        <SummaryLine label="Medications" value={patient.medications?.length ? patient.medications.join(', ') : 'Not recorded'} />
+        <SummaryLine label="Notes" value={patient.notes ?? 'Not recorded'} />
+      </View>
 
       <SectionHeader title="Things to watch" detail={`${alerts.length} noted`} />
       <View style={styles.alertStack}>
@@ -1383,6 +1421,58 @@ function CareDetailsPanel({
           alerts.map((alert) => <AlertCard key={alert.id} alert={alert} />)
         )}
       </View>
+
+      <SectionHeader title="Assignment" detail="Visit owner" />
+      <View style={styles.contextPanel}>
+        <SummaryLine label="Worker" value={worker} />
+        <SummaryLine label="Visit" value={location} />
+      </View>
+    </View>
+  );
+}
+
+function VisitSummaryPanel({
+  status,
+  lifecycle,
+  completed,
+  followUp,
+  visit,
+  shiftSummaryOpen,
+  totalVisits,
+  completedVisits,
+  followUpCount,
+}: {
+  status: string;
+  lifecycle: string;
+  completed: string;
+  followUp: string;
+  visit: VisitContext;
+  shiftSummaryOpen: boolean;
+  totalVisits: number;
+  completedVisits: number;
+  followUpCount: number;
+}) {
+  return (
+    <View style={styles.tabPanel}>
+      <SectionHeader title="Visit record" detail="Status and location" />
+      <View style={styles.summaryPanel}>
+        <SummaryLine label="Visit" value={status} />
+        <SummaryLine label="Stage" value={lifecycle} />
+        <SummaryLine label="Progress" value={completed} />
+        <SummaryLine label="Follow-up" value={followUp} />
+        <SummaryLine label="Check-in" value={visit.checkIn ? locationSnapshotSummary(visit.checkIn) : 'Not recorded'} />
+        <SummaryLine label="Check-out" value={visit.checkOut ? locationSnapshotSummary(visit.checkOut) : 'Not recorded'} />
+      </View>
+
+      <LocationCheckCard visit={visit} />
+
+      {shiftSummaryOpen && (
+        <ShiftSummary
+          total={totalVisits}
+          completed={completedVisits}
+          followUps={followUpCount}
+        />
+      )}
     </View>
   );
 }
@@ -1392,6 +1482,7 @@ function MedicationSupportPanel({
   patient,
   record,
   workerId,
+  workerName,
   disabled,
   onSave,
 }: {
@@ -1399,6 +1490,7 @@ function MedicationSupportPanel({
   patient: PatientInfo;
   record?: MedicationSupportRecord | null;
   workerId: string;
+  workerName: string;
   disabled: boolean;
   onSave: (record: Omit<MedicationSupportRecord, 'id' | 'visitId'>) => void;
 }) {
@@ -1424,7 +1516,14 @@ function MedicationSupportPanel({
 
   const updateMedicationTakenStatus = (name: string, takenStatus: MedicationSupportItem['takenStatus']) => {
     setMedicationItems((current) =>
-      current.map((item) => item.name === name ? { ...item, takenStatus } : item),
+      current.map((item) => {
+        if (item.name !== name) return item;
+        return {
+          ...item,
+          takenStatus,
+          takenAt: takenStatus === 'Taken' ? (item.takenAt ?? new Date().toISOString()) : undefined,
+        };
+      }),
     );
   };
 
@@ -1450,6 +1549,9 @@ function MedicationSupportPanel({
           {medicationItems.map((item) => (
             <View key={item.name} style={styles.medicationItemRow}>
               <Text style={styles.medicationName}>{item.name}</Text>
+              {item.takenStatus === 'Taken' && item.takenAt && (
+                <Text style={styles.medicationTakenAt}>Taken at {formatMedicationTakenTime(item.takenAt)}</Text>
+              )}
               <View style={styles.medicationTakenOptions}>
                 {medicationTakenStatusOptions.map((option) => (
                   <TouchableOpacity
@@ -1491,7 +1593,10 @@ function MedicationSupportPanel({
           <View style={styles.inlineLocationStatus}>
             <Text style={styles.inlineLocationLabel}>Audit record</Text>
             <Text style={styles.inlineLocationValue}>
-              Visit {record.visitId} · HCW {record.hcwId} · {formatShortTime(record.timestamp)}
+              Patient {patient.name} · Care worker {workerName}
+            </Text>
+            <Text style={styles.inlineLocationValue}>
+              Saved {formatSavedDateTime(record.timestamp)}
             </Text>
           </View>
         )}
@@ -1517,10 +1622,11 @@ function createMedicationSupportItems(
   medicationNames: string[],
   existingItems?: MedicationSupportItem[],
 ): MedicationSupportItem[] {
-  const existingByName = new Map((existingItems ?? []).map((item) => [item.name, item.takenStatus]));
+  const existingByName = new Map((existingItems ?? []).map((item) => [item.name, item]));
   return medicationNames.map((name) => ({
     name,
-    takenStatus: existingByName.get(name),
+    takenStatus: existingByName.get(name)?.takenStatus,
+    takenAt: existingByName.get(name)?.takenAt,
   }));
 }
 
@@ -1686,6 +1792,21 @@ function formatScheduleTime(raw: string) {
 
 function formatShortTime(raw: string) {
   return new Date(raw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatMedicationTakenTime(raw: string) {
+  return new Date(raw).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatSavedDateTime(raw: string) {
+  const date = new Date(raw);
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function getNextStepCopy(
@@ -1882,6 +2003,7 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#2E6F73' },
   tabPanel: { marginTop: 12 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8, gap: 12 },
+  sectionHeaderCompact: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   sectionTitle: { color: '#16231E', fontSize: 17, fontWeight: '800' },
   sectionDetail: { color: '#60746B', fontSize: 11, flexShrink: 1, textAlign: 'right' },
   contextPanel: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', paddingHorizontal: 12 },
@@ -1922,6 +2044,7 @@ const styles = StyleSheet.create({
   medicationTakenButtonActive: { backgroundColor: '#2E6F73', borderColor: '#2E6F73' },
   medicationTakenText: { color: '#3D4E47', fontSize: 11, fontWeight: '900' },
   medicationTakenTextActive: { color: '#FFFFFF' },
+  medicationTakenAt: { color: '#2F7D46', fontSize: 12, fontWeight: '800', lineHeight: 17 },
   alertStack: { gap: 8 },
   alertCard: { borderRadius: 8, borderLeftWidth: 5, padding: 12, backgroundColor: '#FFFFFF' },
   alertHigh: { borderLeftColor: '#A83B32', backgroundColor: '#FFF5F3' },
@@ -1970,6 +2093,30 @@ const styles = StyleSheet.create({
   suggestedQuestionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   suggestedQuestionButton: { flexGrow: 1, flexBasis: 150, minHeight: 40, backgroundColor: '#2E6F73', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
   suggestedQuestionText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', textAlign: 'center' },
+  translatePanel: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    padding: 12,
+    gap: 10,
+    marginBottom: 12,
+  },
+  translateInput: { minHeight: 74, textAlignVertical: 'top' },
+  phraseGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  phraseButton: {
+    flexGrow: 1,
+    flexBasis: 150,
+    minHeight: 42,
+    backgroundColor: '#F4F7F6',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    justifyContent: 'center',
+  },
+  phraseText: { color: '#3D4E47', fontSize: 12, fontWeight: '800', lineHeight: 16 },
   chatPanel: { backgroundColor: '#EFF5F2', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', paddingVertical: 8, minHeight: 260 },
   emptyChat: { padding: 22, alignItems: 'center' },
   emptyChatTitle: { color: '#16231E', fontSize: 16, fontWeight: '800' },

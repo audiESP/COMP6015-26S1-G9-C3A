@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -1261,18 +1261,26 @@ def _normalise_medication_items(items: Any, medication_names: list[str]) -> list
                 continue
             name = str(item.get("name") or "").strip()
             taken_status = str(item.get("takenStatus") or "").strip()
+            taken_at = str(item.get("takenAt") or "").strip()
             if name:
-                by_name[name] = taken_status
+                by_name[name] = {
+                    "takenStatus": taken_status,
+                    "takenAt": taken_at,
+                }
 
     result = []
     for name in medication_names:
         clean_name = str(name).strip()
         if not clean_name:
             continue
-        taken_status = by_name.get(clean_name, "")
+        existing = by_name.get(clean_name, {})
+        taken_status = existing.get("takenStatus", "")
         if taken_status not in MEDICATION_TAKEN_STATUSES:
             raise VisitValidationError(f"Medication taken status is required for {clean_name}")
-        result.append({"name": clean_name, "takenStatus": taken_status})
+        normalised_item = {"name": clean_name, "takenStatus": taken_status}
+        if taken_status == "Taken":
+            normalised_item["takenAt"] = existing.get("takenAt") or datetime.now(timezone.utc).isoformat()
+        result.append(normalised_item)
 
     if not result:
         raise VisitValidationError("At least one medication must be listed for medication support")
