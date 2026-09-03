@@ -1621,6 +1621,9 @@ const summarySourceCategoryMeta: Record<string, { title: string }> = {
 };
 
 function SummarySources({ records }: { records: PatientSummaryRecord[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+
   const groups = useMemo(() => {
     const byCategory = new Map<string, PatientSummaryRecord[]>();
     for (const record of records) {
@@ -1631,25 +1634,53 @@ function SummarySources({ records }: { records: PatientSummaryRecord[] }) {
     return Array.from(byCategory.entries());
   }, [records]);
 
+  const toggleGroup = (category: string) => {
+    setOpenGroups((current) => ({ ...current, [category]: !current[category] }));
+  };
+
   return (
     <View style={styles.sourcesPanel}>
-      <Text style={styles.sourcesTitle}>Sources used for this summary</Text>
-      <Text style={styles.sourcesSubtitle}>
-        Records the AI referenced from the patient dataset. Review these before acting on the summary.
-      </Text>
-      {groups.map(([category, items]) => (
-        <View key={category} style={styles.sourcesGroup}>
-          <Text style={styles.sourcesGroupTitle}>
-            {summarySourceCategoryMeta[category]?.title ?? category} ({items.length})
+      <TouchableOpacity
+        style={styles.sourcesHeader}
+        onPress={() => setExpanded((current) => !current)}
+        accessibilityRole="button"
+      >
+        <View style={styles.sourcesHeaderText}>
+          <Text style={styles.sourcesTitle}>Sources used for this summary</Text>
+          <Text style={styles.sourcesSubtitle}>
+            {records.length} record{records.length === 1 ? '' : 's'} the AI referenced from the patient dataset.
           </Text>
-          {items.map((item, index) => (
-            <View key={`${item.label}-${index}`} style={styles.sourceItem}>
-              <Text style={styles.sourceLabel}>{item.label}</Text>
-              {item.detail ? <Text style={styles.sourceDetail}>{item.detail}</Text> : null}
-            </View>
-          ))}
         </View>
-      ))}
+        <Text style={styles.sourcesChevron}>{expanded ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={styles.sourcesBody}>
+          {groups.map(([category, items]) => {
+            const isOpen = !!openGroups[category];
+            return (
+              <View key={category} style={styles.sourcesGroup}>
+                <TouchableOpacity
+                  style={styles.sourcesGroupHeader}
+                  onPress={() => toggleGroup(category)}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.sourcesGroupTitle}>
+                    {summarySourceCategoryMeta[category]?.title ?? category} ({items.length})
+                  </Text>
+                  <Text style={styles.sourcesChevron}>{isOpen ? '▲' : '▼'}</Text>
+                </TouchableOpacity>
+                {isOpen && items.map((item, index) => (
+                  <View key={`${item.label}-${index}`} style={styles.sourceItem}>
+                    <Text style={styles.sourceLabel}>{item.label}</Text>
+                    {item.detail ? <Text style={styles.sourceDetail}>{item.detail}</Text> : null}
+                  </View>
+                ))}
+              </View>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
@@ -2376,10 +2407,15 @@ const styles = StyleSheet.create({
   emptyTimeline: { color: '#60746B', fontSize: 13 },
   summaryBody: { color: '#16231E', fontSize: 13, lineHeight: 20, paddingVertical: 10 },
   summaryStatusText: { color: '#60746B', fontSize: 13, paddingVertical: 12 },
-  sourcesPanel: { backgroundColor: '#F3F6F4', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', padding: 12, marginTop: 12, gap: 10 },
+  sourcesPanel: { backgroundColor: '#F3F6F4', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', padding: 12, marginTop: 12 },
+  sourcesHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  sourcesHeaderText: { flex: 1, gap: 3 },
+  sourcesChevron: { color: '#60746B', fontSize: 13 },
+  sourcesBody: { marginTop: 10, gap: 10 },
   sourcesTitle: { color: '#16231E', fontSize: 13, fontWeight: '800' },
   sourcesSubtitle: { color: '#60746B', fontSize: 12, lineHeight: 17 },
   sourcesGroup: { gap: 6 },
+  sourcesGroupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   sourcesGroupTitle: { color: '#1E3A2F', fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
   sourceItem: { backgroundColor: '#FFFFFF', borderRadius: 6, borderWidth: 1, borderColor: '#E3EAE6', paddingHorizontal: 10, paddingVertical: 8 },
   sourceLabel: { color: '#16231E', fontSize: 12, fontWeight: '600' },

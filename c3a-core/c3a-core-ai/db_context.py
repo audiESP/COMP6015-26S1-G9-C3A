@@ -172,6 +172,7 @@ class DbContextRetriever:
             max_size=self.pool_max_size,
             timeout=self.pool_timeout_seconds,
             kwargs={"row_factory": dict_row, "autocommit": True},
+            check=ConnectionPool.check_connection,
             open=False,
         )
         try:
