@@ -37,6 +37,8 @@ from app.schemas import (
     GenerateVisitReportResponse,
     MedicationSupportRequest,
     ScenarioResponse,
+    RiskAnalysisRequest,
+    RiskAnalysisResponse,
     ShiftSummaryResponse,
     StartVisitRequest,
     TaskIssueRequest,
@@ -298,6 +300,17 @@ async def generate_visit_report(visit_id: str, req: GenerateVisitReportRequest, 
             len(ai_response.reply),
         )
         return GenerateVisitReportResponse(report=ai_response.reply)
+    except AiServiceUnavailable as exc:
+        raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
+
+
+@app.post("/ai/risk/analyse", response_model=RiskAnalysisResponse)
+async def analyse_risk(req: RiskAnalysisRequest, request: Request):
+    try:
+        return await ai_client.analyse_risk(
+            req,
+            request_id=getattr(request.state, "request_id", None),
+        )
     except AiServiceUnavailable as exc:
         raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 

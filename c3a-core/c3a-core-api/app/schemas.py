@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -263,3 +263,31 @@ class AiChatResponse(BaseModel):
     sources: list[str] = []
     rag: dict[str, Any] = {}
     model: dict[str, Any] = {}
+
+
+class RiskAnalysisRequest(BaseModel):
+    note: str
+    patientContext: Optional[PatientContext] = None
+    workerContext: Optional[WorkerContext] = None
+    visitContext: Optional[VisitContext] = None
+    currentTaskContext: Optional[CareTaskContext] = None
+    taskContext: Optional[list[CareTaskContext]] = None
+    eventContext: Optional[list[ScenarioEventContext]] = None
+    riskContext: Optional[list[RiskContext]] = None
+
+
+class RiskSuggestion(BaseModel):
+    riskType: str
+    level: Literal["low", "moderate", "high"]
+    confidence: float
+    reason: str
+    recommendedActions: list[str]
+    requiresConfirmation: bool = True
+
+
+class RiskAnalysisResponse(BaseModel):
+    suggestions: list[RiskSuggestion] = []
+    safetyBoundary: dict[str, bool] = {
+        "diagnosisMade": False,
+        "medicationChangeSuggested": False,
+    }

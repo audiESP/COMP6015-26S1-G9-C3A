@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import date, datetime, timezone
 from typing import Any
@@ -282,6 +283,13 @@ class VisitRepository:
                     (visit_status, lifecycle, visit_id),
                 )
                 event_id = self._insert_event(cursor, visit_id, event_type, worker_id, task_id=task["id"], note=note)
+                alert["payload"] = {
+                    "task_id": str(task["id"]),
+                    "task_type": task["type"],
+                    "task_status": task_status,
+                    "issue_type": issue_type,
+                    "triggered_by": "task_issue",
+                }
                 self._upsert_alert(cursor, visit_id, alert, event_id)
                 return self._get_scenario(cursor, visit_id)
 
@@ -1134,7 +1142,7 @@ class VisitRepository:
         )
         return cursor.fetchone() is not None
 
-    def _upsert_alert(self, cursor, visit_id: str, alert: dict[str, str], event_id: str) -> None:
+    def _upsert_alert(self, cursor, visit_id: str, alert: dict[str, Any], event_id: str) -> None:
         cursor.execute(
             """
             insert into c3a_app_risk_alerts (
@@ -1145,9 +1153,10 @@ class VisitRepository:
                 message,
                 source,
                 generated_from_event_id,
+                payload,
                 updated_at
             )
-            values (%s, %s, %s, %s, %s, 'rules', %s, now())
+            values (%s, %s, %s, %s, %s, 'rules', %s, %s::jsonb, now())
             on conflict (visit_id, alert_key) do update
             set level = excluded.level,
                 title = excluded.title,
@@ -1155,9 +1164,18 @@ class VisitRepository:
                 source = excluded.source,
                 status = 'active',
                 generated_from_event_id = excluded.generated_from_event_id,
+                payload = excluded.payload,
                 updated_at = now()
             """,
-            (visit_id, alert["alert_key"], alert["level"], alert["title"], alert["message"], event_id),
+            (
+                visit_id,
+                alert["alert_key"],
+                alert["level"],
+                alert["title"],
+                alert["message"],
+                event_id,
+                json.dumps(alert.get("payload", {})),
+            ),
         )
 
 
@@ -1169,36 +1187,58 @@ def _issue_mapping(task: dict[str, Any], issue_type: str):
             "incident",
             "incident_active",
             {
-                "alert_key": "unsteady-risk",
+                "alert_key": f"unsteady-risk-{task['id']}",
                 "level": "high",
                 "title": "Patient appears unsteady",
                 "message": "Pause routine tasks, complete mobility observations, and consider a later follow-up or escalation.",
             },
         )
-    if issue_type == "patient_declined":
+    if issue_type == "patient_declined" and task["type"] != "medication":
         return (
             "follow_up_required",
             "skipped",
             "follow_up_required",
             "review",
             {
-                "alert_key": "follow-up",
+                "alert_key": f"follow-up-{task['id']}",
                 "level": "moderate",
                 "title": "Follow-up required",
                 "message": "Schedule a later check and include the reason in the visit summary.",
             },
         )
     if task["type"] == "medication":
+        medication_mapping = {
+            "medication_delayed": (
+                "medication_delayed", "delayed", "delayed", "incident_active",
+                "Medication support is delayed", "Document the delay, do not double doses, and seek nurse or supervisor advice.", "high",
+            ),
+            "medication_unavailable": (
+                "medication_unavailable", "issue", "delayed", "incident_active",
+                "Medication is unavailable", "Record that the medication was unavailable and contact the appropriate supervisor or nurse.", "high",
+            ),
+            "medication_unable_to_confirm": (
+                "medication_unable_to_confirm", "issue", "follow_up_required", "review",
+                "Medication support could not be confirmed", "Do not assume the medication was taken. Document the uncertainty and arrange follow-up.", "moderate",
+            ),
+            "patient_declined": (
+                "medication_declined", "skipped", "follow_up_required", "review",
+                "Patient declined medication support", "Record the refusal and reason, then arrange follow-up according to the care plan.", "moderate",
+            ),
+        }
+        event_type, task_status, visit_status, lifecycle, title, message, level = medication_mapping.get(
+            issue_type,
+            medication_mapping["medication_delayed"],
+        )
         return (
-            "medication_delayed",
-            "issue",
-            "delayed",
-            "incident_active",
+            event_type,
+            task_status,
+            visit_status,
+            lifecycle,
             {
-                "alert_key": "medication-delay",
-                "level": "high",
-                "title": "Medication timing issue",
-                "message": "Document the delay, avoid doubling doses, and seek nurse or supervisor advice if outside the safe administration window.",
+                "alert_key": f"{event_type}-{task['id']}",
+                "level": level,
+                "title": title,
+                "message": message,
             },
         )
     return (
@@ -1207,7 +1247,7 @@ def _issue_mapping(task: dict[str, Any], issue_type: str):
         "follow_up_required",
         "review",
         {
-            "alert_key": "follow-up",
+            "alert_key": f"follow-up-{task['id']}",
             "level": "moderate",
             "title": "Follow-up required",
             "message": "Schedule a later check and include the reason in the visit summary.",
@@ -1220,6 +1260,8 @@ def _issue_note(task: dict[str, Any], issue_type: str) -> str:
         return f"{task['label']}: patient declined"
     if issue_type == "safety_concern":
         return f"{task['label']}: safety concern"
+    if issue_type.startswith("medication_"):
+        return f"{task['label']}: {issue_type.replace('_', ' ')}"
     return f"{task['label']}: could not complete"
 
 

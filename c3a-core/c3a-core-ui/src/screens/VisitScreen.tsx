@@ -21,7 +21,7 @@ import { HistorySidebar } from '../components/HistorySidebar';
 import { PatientModal } from '../components/PatientModal';
 import { useChat } from '../hooks/useChat';
 import '../i18n';
-import { generateVisitReport, setApiBaseUrl } from '../services/api';
+import { analyseRiskNote, generateVisitReport, setApiBaseUrl } from '../services/api';
 import { useChatStore } from '../store/chatStore';
 import { useScenarioStore } from '../store/scenarioStore';
 import {
@@ -35,6 +35,7 @@ import {
   Message,
   PatientInfo,
   RiskAlert,
+  RiskSuggestion,
   VisitContext,
   VisitLifecycleStep,
   VisitQueueItem,
@@ -46,7 +47,7 @@ interface Props {
 }
 
 type VisitSection = 'tasks' | 'patient' | 'assistant' | 'summary';
-type TaskIssueType = 'cannot_complete' | 'patient_declined' | 'safety_concern';
+type TaskIssueType = 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm';
 
 const sections: { id: VisitSection; label: string }[] = [
   { id: 'tasks', label: 'Tasks' },
@@ -171,6 +172,11 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const [visitReport, setVisitReport] = useState('');
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportGenerating, setReportGenerating] = useState(false);
+  const [riskReviewOpen, setRiskReviewOpen] = useState(false);
+  const [riskReviewNote, setRiskReviewNote] = useState('');
+  const [riskSuggestions, setRiskSuggestions] = useState<RiskSuggestion[]>([]);
+  const [riskReviewLoading, setRiskReviewLoading] = useState(false);
+  const [riskReviewError, setRiskReviewError] = useState<string | null>(null);
 
   const {
     scenario,
@@ -393,6 +399,30 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
   };
 
+  const handleAnalyseRiskNote = useCallback(async () => {
+    if (!riskReviewNote.trim() || riskReviewLoading) return;
+    setRiskReviewLoading(true);
+    setRiskReviewError(null);
+    setRiskSuggestions([]);
+    try {
+      const result = await analyseRiskNote({
+        note: riskReviewNote.trim(),
+        patientContext: scenario.patient,
+        workerContext: scenario.worker,
+        visitContext: scenario.visit,
+        currentTaskContext: selectedTask,
+        taskContext: scenario.tasks,
+        eventContext: scenario.events,
+        riskContext: scenario.alerts,
+      });
+      setRiskSuggestions(result.suggestions);
+    } catch (error) {
+      setRiskReviewError(error instanceof Error ? error.message : 'Risk analysis failed.');
+    } finally {
+      setRiskReviewLoading(false);
+    }
+  }, [riskReviewLoading, riskReviewNote, scenario, selectedTask]);
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" backgroundColor="#F7FAF8" />
@@ -526,6 +556,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               onSuggestedQuestion={handleSend}
               onOpenHistory={() => setHistoryOpen(true)}
               onEditPatient={() => setPatientModalOpen(true)}
+              onAnalyseRisk={() => setRiskReviewOpen(true)}
             />
           )}
 
@@ -598,6 +629,21 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
         onClose={() => setPatientModalOpen(false)}
       />
 
+      <RiskReviewModal
+        visible={riskReviewOpen}
+        note={riskReviewNote}
+        suggestions={riskSuggestions}
+        loading={riskReviewLoading}
+        error={riskReviewError}
+        onChange={(value) => {
+          setRiskReviewNote(value);
+          setRiskSuggestions([]);
+          setRiskReviewError(null);
+        }}
+        onAnalyse={handleAnalyseRiskNote}
+        onClose={() => setRiskReviewOpen(false)}
+      />
+
       <FinishVisitFormModal
         visible={finishFormOpen}
         form={careOutcomeForm}
@@ -640,6 +686,75 @@ function isCareOutcomeFormComplete(form: CareOutcomeFormAnswers) {
   if (form.wellbeingConcerns.includes('Other') && !form.wellbeingOther.trim()) return false;
   if (form.followUpRequired !== 'No follow-up required' && !form.followUpDetails.trim()) return false;
   return true;
+}
+
+function RiskReviewModal({
+  visible,
+  note,
+  suggestions,
+  loading,
+  error,
+  onChange,
+  onAnalyse,
+  onClose,
+}: {
+  visible: boolean;
+  note: string;
+  suggestions: RiskSuggestion[];
+  loading: boolean;
+  error: string | null;
+  onChange: (value: string) => void;
+  onAnalyse: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.finishModal}>
+          <View style={styles.finishModalHeader}>
+            <View style={styles.currentTaskCopy}>
+              <Text style={styles.priorityLabel}>AI RISK REVIEW</Text>
+              <Text style={styles.currentTaskTitle}>Review a care note</Text>
+              <Text style={styles.currentTaskDetail}>
+                AI suggestions require worker confirmation and do not create an official alert.
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={onClose} activeOpacity={0.75}>
+              <Text style={styles.modalCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.finishFormScroll} contentContainerStyle={styles.finishFormContent}>
+            <TextField label="Observation or care-worker note" value={note} onChange={onChange} />
+            {error && <Text style={styles.errorText}>{error}</Text>}
+            {suggestions.length === 0 && !loading && !error && (
+              <Text style={styles.currentTaskDetail}>
+                Enter a factual observation, such as a delayed medication, refusal, mobility concern, or communication barrier.
+              </Text>
+            )}
+            {loading && <Text style={styles.currentTaskDetail}>Analysing the note...</Text>}
+            {suggestions.map((suggestion) => (
+              <View key={`${suggestion.riskType}-${suggestion.reason}`} style={styles.riskSuggestionCard}>
+                <Text style={styles.priorityLabel}>{suggestion.level.toUpperCase()} SUGGESTION</Text>
+                <Text style={styles.alertTitle}>{suggestion.riskType}</Text>
+                <Text style={styles.alertMessage}>{suggestion.reason}</Text>
+                {suggestion.recommendedActions.map((action) => (
+                  <Text key={action} style={styles.suggestionAction}>• {action}</Text>
+                ))}
+                <Text style={styles.suggestionConfirmation}>Worker confirmation required</Text>
+              </View>
+            ))}
+          </ScrollView>
+          <View style={styles.finishModalFooter}>
+            <ActionButton
+              label={loading ? 'Analysing...' : 'Analyse note'}
+              onPress={onAnalyse}
+              disabled={!note.trim() || loading}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 }
 
 function FinishVisitFormModal({
@@ -1182,6 +1297,7 @@ function AssistantTab({
   onSuggestedQuestion,
   onOpenHistory,
   onEditPatient,
+  onAnalyseRisk,
 }: {
   error: string | null;
   messages: Message[];
@@ -1191,6 +1307,7 @@ function AssistantTab({
   onSuggestedQuestion: (text: string, attachments: Attachment[]) => void;
   onOpenHistory: () => void;
   onEditPatient: () => void;
+  onAnalyseRisk: () => void;
 }) {
   const [translationText, setTranslationText] = useState('');
   const commonPhrases = [
@@ -1221,6 +1338,9 @@ function AssistantTab({
           </TouchableOpacity>
           <TouchableOpacity style={styles.smallButton} onPress={onEditPatient} activeOpacity={0.75}>
             <Text style={styles.smallButtonText}>Patient</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.smallButton} onPress={onAnalyseRisk} activeOpacity={0.75}>
+            <Text style={styles.smallButtonText}>Review note</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.suggestedQuestionRow}>
@@ -1748,6 +1868,13 @@ function TaskRow({
           <ActionButton label="Cannot complete" tone="warn" onPress={() => onIssue('cannot_complete')} />
           <ActionButton label="Patient declined" tone="warn" onPress={() => onIssue('patient_declined')} />
           <ActionButton label="Safety concern" tone="danger" onPress={() => onIssue('safety_concern')} />
+          {task.type === 'medication' && (
+            <>
+              <ActionButton label="Medication delayed" tone="warn" onPress={() => onIssue('medication_delayed')} />
+              <ActionButton label="Medication unavailable" tone="warn" onPress={() => onIssue('medication_unavailable')} />
+              <ActionButton label="Unable to confirm medication" tone="warn" onPress={() => onIssue('medication_unable_to_confirm')} />
+            </>
+          )}
         </View>
       )}
     </View>
@@ -2052,6 +2179,16 @@ const styles = StyleSheet.create({
   alertLow: { borderLeftColor: '#2E6F73', backgroundColor: '#F0F8F7' },
   alertTitle: { color: '#16231E', fontSize: 14, fontWeight: '800' },
   alertMessage: { color: '#3D4E47', fontSize: 13, lineHeight: 19, marginTop: 4 },
+  riskSuggestionCard: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D6E5DF',
+    backgroundColor: '#F4FAF7',
+    padding: 12,
+    marginTop: 10,
+  },
+  suggestionAction: { color: '#3D4E47', fontSize: 13, lineHeight: 19, marginTop: 5 },
+  suggestionConfirmation: { color: '#0D7377', fontSize: 12, fontWeight: '700', marginTop: 9 },
   taskList: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginBottom: 12 },
   taskListInline: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginTop: 12 },
   taskRowContainer: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E4ECE8' },

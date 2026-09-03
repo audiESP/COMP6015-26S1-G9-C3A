@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .logging_utils import preview_object
-from .schemas import AiChatResponse, ChatRequest
+from .schemas import AiChatResponse, ChatRequest, RiskAnalysisRequest, RiskAnalysisResponse
 
 
 DEFAULT_AI_BASE_URL = "http://127.0.0.1:8001"
@@ -109,6 +109,24 @@ class AiClient:
                 exc,
                 exc_info=True,
             )
+            raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
+
+    async def analyse_risk(
+        self,
+        request: RiskAnalysisRequest,
+        request_id: str | None = None,
+    ) -> RiskAnalysisResponse:
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/ai/risk/analyse",
+                    json=request.model_dump(exclude_none=True),
+                    headers=_request_headers(request_id),
+                )
+                response.raise_for_status()
+                return RiskAnalysisResponse.model_validate(response.json())
+        except Exception as exc:
+            self.logger.error("AI risk analysis failed request_id=%s error=%s", request_id, exc, exc_info=True)
             raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
 
     async def stream_chat(
