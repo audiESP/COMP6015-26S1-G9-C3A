@@ -10,6 +10,8 @@ import {
   VisitReportRequest,
   VisitReportResponse,
   VisitQueueItem,
+  RiskAnalysisRequest,
+  RiskAnalysisResponse,
 } from '../types';
 
 const DEFAULT_API_PORT = '8000';
@@ -293,7 +295,7 @@ export async function updateTaskStatus(
 export async function reportTaskIssue(
   visitId: string,
   taskId: string,
-  type: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+  type: 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm',
   workerId: string,
 ): Promise<ScenarioContext> {
   return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}/issue`, {
@@ -321,6 +323,15 @@ export async function generateVisitReport(
     method: 'POST',
     body: JSON.stringify(request),
   }, 300000);
+}
+
+export async function analyseRiskNote(
+  request: RiskAnalysisRequest,
+): Promise<RiskAnalysisResponse> {
+  return requestJson('/ai/risk/analyse', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }, 120000);
 }
 
 /**

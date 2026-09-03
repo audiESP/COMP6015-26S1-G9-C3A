@@ -161,6 +161,15 @@ export interface RiskAlert {
   source?: 'rules' | 'rag' | 'ai';
 }
 
+export interface RiskSuggestion {
+  riskType: string;
+  level: 'low' | 'moderate' | 'high';
+  confidence: number;
+  reason: string;
+  recommendedActions: string[];
+  requiresConfirmation: boolean;
+}
+
 export interface ScenarioContext {
   worker: WorkerContext;
   patient: PatientInfo;
@@ -239,6 +248,25 @@ export interface VisitReportRequest {
   eventContext?: ScenarioEvent[];
   riskContext?: RiskAlert[];
   careOutcomeForm: CareOutcomeFormAnswers;
+}
+
+export interface RiskAnalysisRequest {
+  note: string;
+  patientContext?: PatientInfo;
+  workerContext?: WorkerContext;
+  visitContext?: VisitContext;
+  currentTaskContext?: CareTask;
+  taskContext?: CareTask[];
+  eventContext?: ScenarioEvent[];
+  riskContext?: RiskAlert[];
+}
+
+export interface RiskAnalysisResponse {
+  suggestions: RiskSuggestion[];
+  safetyBoundary: {
+    diagnosisMade: boolean;
+    medicationChangeSuggested: boolean;
+  };
 }
 
 export interface VisitReportResponse {
