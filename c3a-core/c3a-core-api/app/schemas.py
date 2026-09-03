@@ -247,6 +247,11 @@ class GenerateVisitReportResponse(BaseModel):
     report: str
 
 
+class PatientSummaryResponse(BaseModel):
+    summary: str
+    patientId: str
+
+
 class UploadRequest(BaseModel):
     base64: str
     mimeType: str

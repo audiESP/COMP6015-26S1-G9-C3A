@@ -218,6 +218,18 @@ class RagSearchRequest(BaseModel):
     topK: Optional[int] = None
 
 
+class PatientSummaryRequest(BaseModel):
+    patientId: str
+    patientContext: Optional[PatientContext] = None
+
+
+class PatientSummaryResponse(BaseModel):
+    summary: str
+    patientId: str
+    database: dict[str, Any] = {}
+    model: dict[str, Any] = {}
+
+
 @app.on_event("startup")
 async def startup_log_summary():
     await service.check_health()
@@ -362,6 +374,47 @@ async def health():
             "chat_uses_rag": CHAT_RAG_ENABLED,
         },
     }
+
+
+@app.post("/ai/patient-summary", response_model=PatientSummaryResponse)
+async def patient_summary(req: PatientSummaryRequest):
+    started_at = time.perf_counter()
+    logger.info("AI POST /ai/patient-summary received patient_id=%s", req.patientId)
+    db_result = await db_context_retriever.patient_summary_context(req.patientId)
+    if not db_result.context:
+        logger.warning("AI patient summary found no database rows patient_id=%s", req.patientId)
+        raise HTTPException(status_code=404, detail="No database records found for this patient")
+
+    prompt = (
+        "You are the Virtual Health Assistant for a home-care worker. "
+        "Synthesise the following retrieved PostgreSQL patient data (condition, medication, "
+        "allergy, encounter, observation, and CALD information) into a single concise, "
+        "contextual patient summary to present to the home-care worker before or at visit start. "
+        "Combine the data into one coherent response. Use only the supplied data; do not invent "
+        "clinical facts. Use these short headings exactly:\n"
+        "1. Overview\n2. Active Conditions\n3. Medications\n4. Allergies\n"
+        "5. Recent Encounters and Observations\n6. CALD and Communication Needs\n7. Care Focus for this Visit\n\n"
+        f"{db_result.context}"
+    )
+    try:
+        summary = await service.generate_reply(
+            messages=[("user", prompt)],
+            patient=req.patientContext,
+        )
+    except OllamaServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info(
+        "AI POST /ai/patient-summary completed patient_id=%s elapsed_ms=%.1f chars=%s",
+        req.patientId,
+        (time.perf_counter() - started_at) * 1000,
+        len(summary),
+    )
+    return PatientSummaryResponse(
+        summary=summary,
+        patientId=req.patientId,
+        database=db_result.metadata,
+        model=service.status(),
+    )
 
 
 @app.post("/ai/chat", response_model=AiChatResponse)

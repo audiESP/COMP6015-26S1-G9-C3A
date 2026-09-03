@@ -250,6 +250,14 @@ export async function fetchVisitScenario(visitId: string): Promise<ScenarioConte
   });
 }
 
+export async function fetchPatientSummary(
+  patientId: string,
+): Promise<{ summary: string; patientId: string }> {
+  return requestJson(`/patients/${encodeURIComponent(patientId)}/summary`, {
+    method: 'GET',
+  }, 300000);
+}
+
 export async function updatePatientProfile(patient: PatientInfo): Promise<ScenarioContext> {
   return requestJson(`/patients/${encodeURIComponent(patient.id)}/profile`, {
     method: 'PATCH',

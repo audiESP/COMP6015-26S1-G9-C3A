@@ -21,7 +21,7 @@ import { HistorySidebar } from '../components/HistorySidebar';
 import { PatientModal } from '../components/PatientModal';
 import { useChat } from '../hooks/useChat';
 import '../i18n';
-import { generateVisitReport, setApiBaseUrl } from '../services/api';
+import { generateVisitReport, fetchPatientSummary, setApiBaseUrl } from '../services/api';
 import { useChatStore } from '../store/chatStore';
 import { useScenarioStore } from '../store/scenarioStore';
 import {
@@ -171,6 +171,9 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const [visitReport, setVisitReport] = useState('');
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportGenerating, setReportGenerating] = useState(false);
+  const [patientSummary, setPatientSummary] = useState('');
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const {
     scenario,
@@ -216,6 +219,27 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   });
 
   const messages: Message[] = activeSession?.messages ?? [];
+  const patientId = scenario.patient.id;
+
+  useEffect(() => {
+    let cancelled = false;
+    setPatientSummary('');
+    setSummaryError(null);
+    setSummaryLoading(true);
+    fetchPatientSummary(patientId)
+      .then((res) => {
+        if (!cancelled) setPatientSummary(res.summary);
+      })
+      .catch((err) => {
+        if (!cancelled) setSummaryError(err instanceof Error ? err.message : 'Summary unavailable');
+      })
+      .finally(() => {
+        if (!cancelled) setSummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
   const completedTasks = scenario.tasks.filter((task) => task.status === 'completed').length;
   const priorityAlert = activeAlerts[0];
   const visitStarted = scenario.visit.status !== 'scheduled' && scenario.lifecycleStep !== 'pre_visit';
@@ -513,6 +537,9 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               worker={scenario.worker.name}
               location={scenario.visit.location}
               alerts={activeAlerts}
+              summary={patientSummary}
+              summaryLoading={summaryLoading}
+              summaryError={summaryError}
             />
           )}
 
@@ -1379,14 +1406,33 @@ function PatientDetailsPanel({
   worker,
   location,
   alerts,
+  summary,
+  summaryLoading,
+  summaryError,
 }: {
   patient: PatientInfo;
   worker: string;
   location: string;
   alerts: RiskAlert[];
+  summary: string;
+  summaryLoading: boolean;
+  summaryError: string | null;
 }) {
   return (
     <View style={styles.tabPanel}>
+      <SectionHeader title="AI patient summary" detail="From clinical records" />
+      <View style={styles.contextPanel}>
+        {summaryLoading ? (
+          <Text style={styles.summaryStatusText}>Generating patient summary…</Text>
+        ) : summaryError ? (
+          <Text style={styles.summaryStatusText}>Summary unavailable right now.</Text>
+        ) : summary ? (
+          <Text style={styles.summaryBody}>{summary}</Text>
+        ) : (
+          <Text style={styles.summaryStatusText}>No summary available for this patient.</Text>
+        )}
+      </View>
+
       <SectionHeader title="Must know" detail="Care preferences" />
       <View style={styles.contextPanel}>
         <SummaryLine label="Language" value={`${patient.preferredLanguage ?? 'Unknown'}${patient.interpreterRequired ? ' · interpreter recommended' : ''}`} />
@@ -2134,6 +2180,8 @@ const styles = StyleSheet.create({
   timelineTitle: { color: '#16231E', fontSize: 13, fontWeight: '800' },
   timelineTime: { color: '#60746B', fontSize: 12, flex: 1, textAlign: 'right' },
   emptyTimeline: { color: '#60746B', fontSize: 13 },
+  summaryBody: { color: '#16231E', fontSize: 13, lineHeight: 20, paddingVertical: 10 },
+  summaryStatusText: { color: '#60746B', fontSize: 13, paddingVertical: 12 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', justifyContent: 'flex-start' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.34)', justifyContent: 'flex-end' },
   finishModal: {

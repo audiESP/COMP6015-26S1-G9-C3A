@@ -373,6 +373,106 @@ class DbContextRetriever:
             },
         )
 
+    async def patient_summary_context(self, patient_id: str) -> DbContextResult:
+        """Retrieve all clinical sections for one patient for the VHA summary."""
+        metadata: dict[str, Any] = {
+            "configured": self.configured,
+            "patient_id": patient_id,
+            "tables": [],
+            "result_counts": {},
+            "status": self.status(),
+        }
+        if not self.enabled or not self.configured:
+            return DbContextResult(context="", metadata=metadata)
+        normalised = _normalise_uuid(patient_id)
+        if not normalised:
+            return DbContextResult(context="", metadata=metadata)
+
+        started_at = time.perf_counter()
+        try:
+            result = await asyncio.to_thread(self._patient_summary_sync, normalised)
+            self._last_error = None
+            result.metadata["status"] = self.status()
+            logger.info(
+                "PostgreSQL patient summary retrieval completed patient_id=%s counts=%s elapsed_ms=%.1f",
+                normalised,
+                result.metadata["result_counts"],
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return result
+        except Exception as exc:
+            self._last_error = _safe_error_message(exc, self.database_url)
+            logger.warning(
+                "PostgreSQL patient summary retrieval failed elapsed_ms=%.1f error=%s",
+                (time.perf_counter() - started_at) * 1000,
+                self._last_error,
+                exc_info=True,
+            )
+            metadata["status"] = self.status()
+            return DbContextResult(context="", metadata=metadata)
+
+    def _patient_summary_sync(self, patient_id: str) -> DbContextResult:
+        patient_ids = [patient_id]
+        sections: list[str] = []
+        tables: list[str] = []
+        counts: dict[str, int] = {}
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                patient_rows = self._run_query(
+                    "summary.patient", _find_patients, cursor, "", patient_id, 1
+                )
+                _add_section(sections, "Patient", _format_patients(patient_rows))
+                tables.append("c3a_synthea_patients")
+                counts["patients"] = len(patient_rows)
+
+                cald_rows = self._run_query(
+                    "summary.cald", _cald_profiles, cursor, patient_ids, 1
+                )
+                _add_section(sections, "CALD Profile", _format_cald_profiles(cald_rows))
+                tables.append("c3a_synthea_cald_profiles")
+                counts["cald_profiles"] = len(cald_rows)
+
+                for kind, heading, formatter in (
+                    ("conditions", "Conditions", _format_conditions),
+                    ("medications", "Medications", _format_medications),
+                    ("allergies", "Allergies", _format_allergies),
+                    ("encounters", "Encounters", _format_encounters),
+                ):
+                    rows = self._run_query(
+                        f"summary.{kind}",
+                        _rows_for_patients,
+                        cursor,
+                        kind,
+                        patient_ids,
+                        self.max_rows_per_table,
+                    )
+                    _add_section(sections, heading, formatter(rows))
+                    tables.append(f"c3a_synthea_{kind}")
+                    counts[kind] = len(rows)
+
+                observation_rows = self._run_query(
+                    "summary.observations",
+                    _observations,
+                    cursor,
+                    patient_ids,
+                    self.max_rows_per_table,
+                )
+                _add_section(sections, "Observations", _format_observations(observation_rows))
+                tables.append("c3a_synthea_observations")
+                counts["observations"] = len(observation_rows)
+
+        context = _build_context(sections) if sections else ""
+        return DbContextResult(
+            context=context,
+            metadata={
+                "configured": self.configured,
+                "patient_id": patient_id,
+                "tables": tables,
+                "result_counts": counts,
+                "status": self.status(),
+            },
+        )
+
     @contextmanager
     def _connection(self):
         if self._pool is not None:
