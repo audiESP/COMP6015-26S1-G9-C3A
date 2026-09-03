@@ -254,6 +254,7 @@ class PatientSummaryRequest(BaseModel):
 class PatientSummaryResponse(BaseModel):
     summary: str
     patientId: str
+    records: list[dict[str, Any]] = []
     database: dict[str, Any] = {}
     model: dict[str, Any] = {}
 
@@ -479,6 +480,7 @@ async def patient_summary(req: PatientSummaryRequest):
     return PatientSummaryResponse(
         summary=summary,
         patientId=req.patientId,
+        records=db_result.metadata.get("records", []),
         database=db_result.metadata,
         model=service.status(),
     )

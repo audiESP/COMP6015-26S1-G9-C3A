@@ -252,9 +252,16 @@ export async function fetchVisitScenario(visitId: string): Promise<ScenarioConte
   });
 }
 
+export interface PatientSummaryRecord {
+  category: string;
+  table: string;
+  label: string;
+  detail?: string;
+}
+
 export async function fetchPatientSummary(
   patientId: string,
-): Promise<{ summary: string; patientId: string }> {
+): Promise<{ summary: string; patientId: string; records: PatientSummaryRecord[] }> {
   return requestJson(`/patients/${encodeURIComponent(patientId)}/summary`, {
     method: 'GET',
   }, 300000);

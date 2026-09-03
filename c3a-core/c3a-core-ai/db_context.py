@@ -416,6 +416,7 @@ class DbContextRetriever:
         sections: list[str] = []
         tables: list[str] = []
         counts: dict[str, int] = {}
+        records: list[dict[str, Any]] = []
         with self._connection() as connection:
             with connection.cursor() as cursor:
                 patient_rows = self._run_query(
@@ -424,6 +425,13 @@ class DbContextRetriever:
                 _add_section(sections, "Patient", _format_patients(patient_rows))
                 tables.append("c3a_synthea_patients")
                 counts["patients"] = len(patient_rows)
+                for row in patient_rows:
+                    records.append({
+                        "category": "patient",
+                        "table": "c3a_synthea_patients",
+                        "label": f"Patient record — {_patient_name(row)}",
+                        "detail": f"Age {row.get('age')}; {_value(row.get('gender'))}; {_value(row.get('race'))}/{_value(row.get('ethnicity'))}; {_value(row.get('city'))}, {_value(row.get('state'))}",
+                    })
 
                 cald_rows = self._run_query(
                     "summary.cald", _cald_profiles, cursor, patient_ids, 1
@@ -431,6 +439,13 @@ class DbContextRetriever:
                 _add_section(sections, "CALD Profile", _format_cald_profiles(cald_rows))
                 tables.append("c3a_synthea_cald_profiles")
                 counts["cald_profiles"] = len(cald_rows)
+                for row in cald_rows:
+                    records.append({
+                        "category": "cald_profile",
+                        "table": "c3a_synthea_cald_profiles",
+                        "label": f"CALD profile — {_patient_name(row)}",
+                        "detail": f"Language {_value(row.get('preferred_language'))}; interpreter {_value(row.get('interpreter_required'))}; {_value(row.get('cultural_background'))}; mobility {_value(row.get('mobility_support'))}; cognitive {_value(row.get('cognitive_status'))}",
+                    })
 
                 for kind, heading, formatter in (
                     ("conditions", "Conditions", _format_conditions),
@@ -449,6 +464,7 @@ class DbContextRetriever:
                     _add_section(sections, heading, formatter(rows))
                     tables.append(f"c3a_synthea_{kind}")
                     counts[kind] = len(rows)
+                    records.extend(_records_for_rows(kind, rows))
 
                 observation_rows = self._run_query(
                     "summary.observations",
@@ -460,6 +476,7 @@ class DbContextRetriever:
                 _add_section(sections, "Observations", _format_observations(observation_rows))
                 tables.append("c3a_synthea_observations")
                 counts["observations"] = len(observation_rows)
+                records.extend(_records_for_rows("observations", observation_rows))
 
         context = _build_context(sections) if sections else ""
         return DbContextResult(
@@ -469,6 +486,7 @@ class DbContextRetriever:
                 "patient_id": patient_id,
                 "tables": tables,
                 "result_counts": counts,
+                "records": records,
                 "status": self.status(),
             },
         )
@@ -827,6 +845,42 @@ def _format_observations(rows: list[dict[str, Any]]) -> str:
 
 def _patient_name(row: dict[str, Any]) -> str:
     return " ".join(str(part) for part in [row.get("first_name"), row.get("last_name")] if part) or "Unknown"
+
+
+def _records_for_rows(kind: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert clinical rows into citation records shown to the HCW."""
+    category_labels = {
+        "conditions": ("condition", "c3a_synthea_conditions"),
+        "medications": ("medication", "c3a_synthea_medications"),
+        "allergies": ("allergy", "c3a_synthea_allergies"),
+        "encounters": ("progress_note", "c3a_synthea_encounters"),
+        "observations": ("observation", "c3a_synthea_observations"),
+    }
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        category, table = category_labels[kind]
+        if kind == "conditions":
+            label = f"Condition — {row.get('description')}"
+            detail = f"Start {_value(row.get('start_date'))}; stop {_value(row.get('stop_date'))}; code {_value(row.get('code'))}"
+        elif kind == "medications":
+            label = f"Medication — {row.get('description')}"
+            detail = f"Reason {_value(row.get('reason_description'))}; start {_value(row.get('start_at'))}; stop {_value(row.get('stop_at'))}"
+        elif kind == "allergies":
+            label = f"Allergy — {row.get('description')}"
+            detail = f"Category {_value(row.get('category'))}; severity {_value(row.get('severity1') or row.get('severity2'))}; start {_value(row.get('start_date'))}"
+        elif kind == "encounters":
+            label = f"Encounter — {_value(row.get('description'))}"
+            detail = f"{_value(row.get('encounter_class'))}; start {_value(row.get('start_at'))}; reason {_value(row.get('reason_description'))}"
+        else:  # observations
+            label = f"Observation — {row.get('description')}"
+            detail = f"{_value(row.get('value'))} {_value(row.get('units'))} at {_value(row.get('observed_at'))}"
+        records.append({
+            "category": category,
+            "table": table,
+            "label": label,
+            "detail": detail,
+        })
+    return records
 
 
 def _value(value: Any) -> str:

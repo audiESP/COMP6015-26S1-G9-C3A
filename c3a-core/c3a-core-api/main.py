@@ -330,7 +330,11 @@ async def patient_summary(patient_id: str, request: Request):
         (time.perf_counter() - started_at) * 1000,
         len(payload.get("summary", "")),
     )
-    return PatientSummaryResponse(summary=payload.get("summary", ""), patientId=patient_id)
+    return PatientSummaryResponse(
+        summary=payload.get("summary", ""),
+        patientId=patient_id,
+        records=payload.get("records", []),
+    )
 
 
 @app.post("/ai/risk/analyse", response_model=RiskAnalysisResponse)

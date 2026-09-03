@@ -247,9 +247,17 @@ class GenerateVisitReportResponse(BaseModel):
     report: str
 
 
+class PatientSummaryRecord(BaseModel):
+    category: str
+    table: str
+    label: str
+    detail: Optional[str] = None
+
+
 class PatientSummaryResponse(BaseModel):
     summary: str
     patientId: str
+    records: list[PatientSummaryRecord] = []
 
 
 class UploadRequest(BaseModel):
