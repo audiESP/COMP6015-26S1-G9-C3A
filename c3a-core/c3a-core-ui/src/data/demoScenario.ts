@@ -33,7 +33,7 @@ export const demoPatient: PatientInfo = {
     'Speak slowly, avoid idioms, and allow a family member to support medication discussions.',
   careRiskFlags: ['falls risk', 'language barrier', 'polypharmacy review'],
   allergies: ['Mold - mild cutaneous hypersensitivity'],
-  medications: ['Lunchtime medication assistance required'],
+  medications: ['Metformin 500 mg', 'Amlodipine 5 mg', 'Atorvastatin 20 mg', 'Vitamin D3 1000 IU'],
   pastMedicalHistory: 'Type 2 diabetes; recurrent falls; chronic hypertension.',
   notes:
     'Synthetic patient from Neon c3a_synthea tables, paired with CALD profile for scenario testing.',
@@ -55,7 +55,7 @@ const florPatient: PatientInfo = {
   communicationNotes:
     'Use plain language, confirm understanding with teach-back, involve adult child for complex care decisions.',
   careRiskFlags: ['polypharmacy review', 'language barrier', 'nutrition monitoring'],
-  medications: ['Afternoon medication prompt'],
+  medications: ['Paracetamol 500 mg', 'Ramipril 5 mg', 'Calcium carbonate + vitamin D', 'Omeprazole 20 mg'],
   pastMedicalHistory: 'Osteoarthritis; chronic pain; previous hospital admissions for dizziness.',
 };
 
@@ -75,7 +75,7 @@ const tyeshaPatient: PatientInfo = {
   communicationNotes:
     'Offer same-gender care worker for personal care when possible; check prayer-time preferences.',
   careRiskFlags: ['falls risk', 'language barrier', 'polypharmacy review'],
-  medications: ['Evening medication prompt'],
+  medications: ['Apixaban 5 mg', 'Bisoprolol 2.5 mg', 'Furosemide 20 mg', 'Sertraline 50 mg'],
   pastMedicalHistory: 'Atrial fibrillation; recent discharge after dehydration-related admission.',
 };
 
@@ -106,11 +106,19 @@ function tasksForVisit(kind: 'lunch' | 'wellbeing' | 'mobility'): CareTask[] {
         detail: 'Check comfort, hydration, appetite, and orientation.',
       },
       {
+        id: 'medication',
+        label: 'Record medication support',
+        type: 'medication',
+        status: 'pending',
+        dueAt: '13:45',
+        detail: 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.',
+      },
+      {
         id: 'mobility',
         label: 'Transfer assistance observation',
         type: 'mobility',
         status: 'pending',
-        dueAt: '13:50',
+        dueAt: '13:55',
         detail: 'Observe transfer support needs and document changes.',
       },
       {
@@ -143,11 +151,19 @@ function tasksForVisit(kind: 'lunch' | 'wellbeing' | 'mobility'): CareTask[] {
         detail: 'Confirm comfort, pain, and any confusion today.',
       },
       {
+        id: 'medication',
+        label: 'Record medication support',
+        type: 'medication',
+        status: 'pending',
+        dueAt: '15:15',
+        detail: 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.',
+      },
+      {
         id: 'mobility',
         label: 'Mobility and personal-care support',
         type: 'mobility',
         status: 'pending',
-        dueAt: '15:20',
+        dueAt: '15:25',
         detail: 'Observe steadiness and respect same-gender care preference where possible.',
       },
       {
@@ -180,11 +196,11 @@ function tasksForVisit(kind: 'lunch' | 'wellbeing' | 'mobility'): CareTask[] {
   },
   {
     id: 'medication',
-    label: 'Assist lunchtime medication',
+    label: 'Record medication support',
     type: 'medication',
     status: 'pending',
     dueAt: '12:20',
-    detail: 'Confirm medication prompt and document if delayed or refused.',
+    detail: 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.',
   },
   {
     id: 'wellbeing',
@@ -275,9 +291,9 @@ export const demoScenarioSeeds: DemoScenarioSeed[] = [
       plannedAddress: 'Demo home address, Victoria Park WA',
       plannedCoords: { latitude: -31.9766, longitude: 115.9007 },
       locationThresholdMeters: 150,
-      status: 'completed',
+      status: 'scheduled',
     },
-    tasks: tasksForVisit('lunch').map((task) => ({ ...task, status: 'completed' })),
+    tasks: tasksForVisit('lunch'),
     alerts: alertsForPatient(demoPatient),
   },
   {

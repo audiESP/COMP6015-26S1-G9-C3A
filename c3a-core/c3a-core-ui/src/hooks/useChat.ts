@@ -68,6 +68,7 @@ export function useChat({
           visitContext: scenarioContext?.visit,
           currentTaskContext: currentTask,
           taskContext: scenarioContext?.tasks,
+          medicationSupportContext: scenarioContext?.medicationSupport,
           eventContext: scenarioContext?.events,
           riskContext: scenarioContext?.alerts,
           checklistContext: scenarioContext?.incidentChecklist,

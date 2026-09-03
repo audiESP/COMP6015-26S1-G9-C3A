@@ -39,7 +39,7 @@ values
     'Ask before serving beef-heavy meals; prefers rice-based meals.',
     'Speak slowly, avoid idioms, and allow a family member to support medication discussions.',
     '["falls risk","language barrier","polypharmacy review"]'::jsonb,
-    '["Lunchtime medication assistance required"]'::jsonb,
+    '["Metformin 500 mg","Amlodipine 5 mg","Atorvastatin 20 mg","Vitamin D3 1000 IU"]'::jsonb,
     now()
 ),
 (
@@ -56,7 +56,7 @@ values
     'Prefers warm meals; avoid cold drinks when possible.',
     'Use plain language, confirm understanding with teach-back, involve adult child for complex care decisions.',
     '["polypharmacy review","language barrier","nutrition monitoring"]'::jsonb,
-    '["Afternoon medication prompt"]'::jsonb,
+    '["Paracetamol 500 mg","Ramipril 5 mg","Calcium carbonate + vitamin D","Omeprazole 20 mg"]'::jsonb,
     now()
 ),
 (
@@ -73,7 +73,7 @@ values
     'Halal diet; avoid pork-derived products unless clinically necessary and discussed.',
     'Offer same-gender care worker for personal care when possible; check prayer-time preferences.',
     '["falls risk","language barrier","polypharmacy review"]'::jsonb,
-    '["Evening medication prompt"]'::jsonb,
+    '["Apixaban 5 mg","Bisoprolol 2.5 mg","Furosemide 20 mg","Sertraline 50 mg"]'::jsonb,
     now()
 )
 on conflict (patient_id) do update
@@ -138,8 +138,8 @@ from (
         -31.9766,
         115.9007,
         150,
-        'completed',
-        'closed',
+        'scheduled',
+        'pre_visit',
         now()
     ),
     (
@@ -233,20 +233,22 @@ with task_seed as (
     select *
     from (
         values
-        ('visit-home-1200', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T12:00:00+08:00'::timestamptz, 'Confirm address, introduce visit purpose, check preferred communication.', 1, 'completed'),
-        ('visit-home-1200', 'meal', 'Support lunch routine', 'meal', '2026-05-12T12:10:00+08:00'::timestamptz, 'Offer rice-based meal option and check appetite.', 2, 'completed'),
-        ('visit-home-1200', 'medication', 'Assist lunchtime medication', 'medication', '2026-05-12T12:20:00+08:00'::timestamptz, 'Confirm medication prompt and document if delayed or refused.', 3, 'completed'),
-        ('visit-home-1200', 'wellbeing', 'Wellbeing and comfort check', 'wellbeing', '2026-05-12T12:30:00+08:00'::timestamptz, 'Ask about pain, dizziness, hydration, and unusual symptoms.', 4, 'completed'),
-        ('visit-home-1200', 'mobility', 'Observe mobility and falls risk', 'mobility', '2026-05-12T12:35:00+08:00'::timestamptz, 'Check walker use and whether gait is steady today.', 5, 'completed'),
-        ('visit-home-1200', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T12:45:00+08:00'::timestamptz, 'Record completed tasks, issues, escalation, and follow-up needs.', 6, 'completed'),
+        ('visit-home-1200', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T12:00:00+08:00'::timestamptz, 'Confirm address, introduce visit purpose, check preferred communication.', 1, 'pending'),
+        ('visit-home-1200', 'meal', 'Support lunch routine', 'meal', '2026-05-12T12:10:00+08:00'::timestamptz, 'Offer rice-based meal option and check appetite.', 2, 'pending'),
+        ('visit-home-1200', 'medication', 'Record medication support', 'medication', '2026-05-12T12:20:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
+        ('visit-home-1200', 'wellbeing', 'Wellbeing and comfort check', 'wellbeing', '2026-05-12T12:30:00+08:00'::timestamptz, 'Ask about pain, dizziness, hydration, and unusual symptoms.', 4, 'pending'),
+        ('visit-home-1200', 'mobility', 'Observe mobility and falls risk', 'mobility', '2026-05-12T12:35:00+08:00'::timestamptz, 'Check walker use and whether gait is steady today.', 5, 'pending'),
+        ('visit-home-1200', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T12:45:00+08:00'::timestamptz, 'Record completed tasks, issues, escalation, and follow-up needs.', 6, 'pending'),
         ('visit-home-1330', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T13:30:00+08:00'::timestamptz, 'Confirm interpreter preference and orient the patient to the visit.', 1, 'pending'),
         ('visit-home-1330', 'wellbeing', 'Wellbeing and nutrition check', 'wellbeing', '2026-05-12T13:40:00+08:00'::timestamptz, 'Check comfort, hydration, appetite, and orientation.', 2, 'pending'),
-        ('visit-home-1330', 'mobility', 'Transfer assistance observation', 'mobility', '2026-05-12T13:50:00+08:00'::timestamptz, 'Observe transfer support needs and document changes.', 3, 'pending'),
-        ('visit-home-1330', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T14:05:00+08:00'::timestamptz, 'Record nutrition, transfer support, and family communication needs.', 4, 'pending'),
+        ('visit-home-1330', 'medication', 'Record medication support', 'medication', '2026-05-12T13:45:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
+        ('visit-home-1330', 'mobility', 'Transfer assistance observation', 'mobility', '2026-05-12T13:55:00+08:00'::timestamptz, 'Observe transfer support needs and document changes.', 4, 'pending'),
+        ('visit-home-1330', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T14:05:00+08:00'::timestamptz, 'Record nutrition, transfer support, and family communication needs.', 5, 'pending'),
         ('visit-home-1500', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T15:00:00+08:00'::timestamptz, 'Check communication preferences before personal-care support.', 1, 'pending'),
         ('visit-home-1500', 'wellbeing', 'Orientation and comfort check', 'wellbeing', '2026-05-12T15:10:00+08:00'::timestamptz, 'Confirm comfort, pain, and any confusion today.', 2, 'pending'),
-        ('visit-home-1500', 'mobility', 'Mobility and personal-care support', 'mobility', '2026-05-12T15:20:00+08:00'::timestamptz, 'Observe steadiness and respect same-gender care preference where possible.', 3, 'pending'),
-        ('visit-home-1500', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T15:40:00+08:00'::timestamptz, 'Record mobility, preferences, and any escalation.', 4, 'pending')
+        ('visit-home-1500', 'medication', 'Record medication support', 'medication', '2026-05-12T15:15:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
+        ('visit-home-1500', 'mobility', 'Mobility and personal-care support', 'mobility', '2026-05-12T15:25:00+08:00'::timestamptz, 'Observe steadiness and respect same-gender care preference where possible.', 4, 'pending'),
+        ('visit-home-1500', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T15:40:00+08:00'::timestamptz, 'Record mobility, preferences, and any escalation.', 5, 'pending')
     ) as seed(external_key, task_key, label, type, due_at, detail, sort_order, status)
 )
 insert into c3a_app_care_tasks (
@@ -286,18 +288,28 @@ set label = excluded.label,
 
 delete from c3a_app_visit_events
 where visit_id in (
-    select id from c3a_app_visits where external_key in ('visit-home-1330', 'visit-home-1500')
+    select id from c3a_app_visits where external_key in ('visit-home-1200', 'visit-home-1330', 'visit-home-1500')
 );
 
 delete from c3a_app_location_snapshots
 where visit_id in (
-    select id from c3a_app_visits where external_key in ('visit-home-1330', 'visit-home-1500')
+    select id from c3a_app_visits where external_key in ('visit-home-1200', 'visit-home-1330', 'visit-home-1500')
 );
 
 delete from c3a_app_risk_alerts
 where visit_id in (
-    select id from c3a_app_visits where external_key in ('visit-home-1330', 'visit-home-1500')
+    select id from c3a_app_visits where external_key in ('visit-home-1200', 'visit-home-1330', 'visit-home-1500')
 );
+
+do $$
+begin
+    if to_regclass('c3a_app_medication_support_records') is not null then
+        delete from c3a_app_medication_support_records
+        where visit_id in (
+            select id from c3a_app_visits where external_key in ('visit-home-1200', 'visit-home-1330', 'visit-home-1500')
+        );
+    end if;
+end $$;
 
 with alert_seed as (
     select *

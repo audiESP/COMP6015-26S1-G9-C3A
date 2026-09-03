@@ -27,6 +27,7 @@ from app.repositories.visit_repository import (
     VisitNotFoundError,
     VisitRepository,
     VisitRepositoryUnavailable,
+    VisitValidationError,
 )
 from app.schemas import (
     ChatRequest,
@@ -34,6 +35,7 @@ from app.schemas import (
     CompleteVisitRequest,
     GenerateVisitReportRequest,
     GenerateVisitReportResponse,
+    MedicationSupportRequest,
     ScenarioResponse,
     RiskAnalysisRequest,
     RiskAnalysisResponse,
@@ -122,6 +124,7 @@ def _visit_report_prompt(req: GenerateVisitReportRequest) -> str:
         f"Worker context:\n{json.dumps(req.workerContext.model_dump(exclude_none=True), indent=2)}\n\n"
         f"Visit context:\n{json.dumps(req.visitContext.model_dump(exclude_none=True), indent=2)}\n\n"
         f"Care tasks:\n{json.dumps([task.model_dump(exclude_none=True) for task in req.taskContext], indent=2)}\n\n"
+        f"Medication support record:\n{json.dumps(req.medicationSupportContext.model_dump(exclude_none=True) if req.medicationSupportContext else None, indent=2)}\n\n"
         f"Events:\n{json.dumps([event.model_dump(exclude_none=True) for event in (req.eventContext or [])], indent=2)}\n\n"
         f"Risk alerts:\n{json.dumps([risk.model_dump(exclude_none=True) for risk in (req.riskContext or [])], indent=2)}\n\n"
         f"Completed Finish Visit care outcome form:\n{json.dumps(req.careOutcomeForm, indent=2)}"
@@ -133,6 +136,8 @@ def _visit_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, VisitNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, VisitValidationError):
+        return HTTPException(status_code=400, detail=str(exc))
     logger.exception("Visit repository operation failed")
     return HTTPException(status_code=500, detail="Visit workflow database operation failed")
 
@@ -238,6 +243,16 @@ def report_task_issue(visit_id: str, task_id: str, req: TaskIssueRequest):
     try:
         return ScenarioResponse.model_validate(
             visit_repository.report_task_issue(visit_id, task_id, req.type, req.workerId)
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.patch("/visits/{visit_id}/medication-support", response_model=ScenarioResponse)
+def update_medication_support(visit_id: str, req: MedicationSupportRequest):
+    try:
+        return ScenarioResponse.model_validate(
+            visit_repository.update_medication_support(visit_id, req.model_dump(exclude_none=True))
         )
     except Exception as exc:
         raise _visit_error(exc) from exc

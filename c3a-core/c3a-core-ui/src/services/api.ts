@@ -5,6 +5,7 @@ import {
   ApiChatResponse,
   CareTaskStatus,
   LocationSnapshot,
+  MedicationSupportRecord,
   PatientInfo,
   ScenarioContext,
   VisitReportRequest,
@@ -301,6 +302,16 @@ export async function reportTaskIssue(
   return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}/issue`, {
     method: 'POST',
     body: JSON.stringify({ type, workerId }),
+  });
+}
+
+export async function updateMedicationSupport(
+  visitId: string,
+  record: Omit<MedicationSupportRecord, 'id' | 'visitId'>,
+): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/medication-support`, {
+    method: 'PATCH',
+    body: JSON.stringify(record),
   });
 }
 
