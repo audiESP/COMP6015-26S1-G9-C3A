@@ -12,9 +12,12 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date
+from typing import Optional
 
 import uvicorn
+import psycopg
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,7 +39,10 @@ from app.schemas import (
     GenerateVisitReportRequest,
     GenerateVisitReportResponse,
     MedicationSupportRequest,
+    PatientSummaryResponse,
     ScenarioResponse,
+    RiskAnalysisRequest,
+    RiskAnalysisResponse,
     ShiftSummaryResponse,
     StartVisitRequest,
     TaskIssueRequest,
@@ -56,7 +62,25 @@ LOG_LEVEL = logging.DEBUG if os.getenv("DEBUG_BACKEND", "").lower() == "true" el
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="C3A Core API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    open_database_pool()
+    logger.info(
+        "C3A Core API startup port=%s debug_backend=%s ai_base_url=%s ai_timeout_seconds=%s database_configured=%s",
+        os.getenv("C3A_API_PORT", "8000"),
+        os.getenv("DEBUG_BACKEND", "").lower() == "true",
+        ai_client.base_url,
+        ai_client.timeout,
+        database_health_checker.configured,
+    )
+    try:
+        yield
+    finally:
+        close_database_pool()
+
+
+app = FastAPI(title="C3A Core API", version="1.0.0", lifespan=lifespan)
 ai_client = AiClient()
 database_health_checker = DatabaseHealthChecker()
 visit_repository = VisitRepository()
@@ -138,26 +162,11 @@ def _visit_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, VisitValidationError):
         return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, psycopg.errors.InvalidTextRepresentation):
+        logger.warning("Visit identifier rejected: %s", exc)
+        return HTTPException(status_code=400, detail="Invalid visit or task identifier format")
     logger.exception("Visit repository operation failed")
     return HTTPException(status_code=500, detail="Visit workflow database operation failed")
-
-
-@app.on_event("startup")
-async def startup_log_summary():
-    open_database_pool()
-    logger.info(
-        "C3A Core API startup port=%s debug_backend=%s ai_base_url=%s ai_timeout_seconds=%s database_configured=%s",
-        os.getenv("C3A_API_PORT", "8000"),
-        os.getenv("DEBUG_BACKEND", "").lower() == "true",
-        ai_client.base_url,
-        ai_client.timeout,
-        database_health_checker.configured,
-    )
-
-
-@app.on_event("shutdown")
-async def shutdown_database_pool():
-    close_database_pool()
 
 
 @app.get("/health")
@@ -219,7 +228,7 @@ def start_visit(visit_id: str, req: StartVisitRequest):
 
 
 @app.post("/visits/{visit_id}/tasks/{task_id}/complete", response_model=ScenarioResponse)
-def complete_task(visit_id: str, task_id: str, req: TaskStatusRequest | None = None):
+def complete_task(visit_id: str, task_id: str, req: Optional[TaskStatusRequest] = None):
     try:
         return ScenarioResponse.model_validate(
             visit_repository.complete_task(visit_id, task_id, req.workerId if req else None)
@@ -301,6 +310,43 @@ async def generate_visit_report(visit_id: str, req: GenerateVisitReportRequest, 
             len(ai_response.reply),
         )
         return GenerateVisitReportResponse(report=ai_response.reply)
+    except AiServiceUnavailable as exc:
+        raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
+
+
+@app.get("/patients/{patient_id}/summary", response_model=PatientSummaryResponse)
+async def patient_summary(patient_id: str, request: Request):
+    started_at = time.perf_counter()
+    logger.info("API GET /patients/%s/summary received", patient_id)
+    try:
+        payload = await ai_client.patient_summary(
+            patient_id,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except AiServiceUnavailable as exc:
+        if "no_patient_records" in str(exc):
+            raise HTTPException(status_code=404, detail="No database records found for this patient") from exc
+        raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
+    logger.info(
+        "API GET /patients/%s/summary completed elapsed_ms=%.1f chars=%s",
+        patient_id,
+        (time.perf_counter() - started_at) * 1000,
+        len(payload.get("summary", "")),
+    )
+    return PatientSummaryResponse(
+        summary=payload.get("summary", ""),
+        patientId=patient_id,
+        records=payload.get("records", []),
+    )
+
+
+@app.post("/ai/risk/analyse", response_model=RiskAnalysisResponse)
+async def analyse_risk(req: RiskAnalysisRequest, request: Request):
+    try:
+        return await ai_client.analyse_risk(
+            req,
+            request_id=getattr(request.state, "request_id", None),
+        )
     except AiServiceUnavailable as exc:
         raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 

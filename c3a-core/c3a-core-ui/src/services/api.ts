@@ -13,6 +13,8 @@ import {
   VisitReportRequest,
   VisitReportResponse,
   VisitQueueItem,
+  RiskAnalysisRequest,
+  RiskAnalysisResponse,
 } from '../types';
 
 const DEFAULT_API_PORT = '8000';
@@ -252,6 +254,21 @@ export async function fetchVisitScenario(visitId: string): Promise<ScenarioConte
   });
 }
 
+export interface PatientSummaryRecord {
+  category: string;
+  table: string;
+  label: string;
+  detail?: string;
+}
+
+export async function fetchPatientSummary(
+  patientId: string,
+): Promise<{ summary: string; patientId: string; records: PatientSummaryRecord[] }> {
+  return requestJson(`/patients/${encodeURIComponent(patientId)}/summary`, {
+    method: 'GET',
+  }, 300000);
+}
+
 export async function updatePatientProfile(patient: PatientInfo): Promise<ScenarioContext> {
   return requestJson(`/patients/${encodeURIComponent(patient.id)}/profile`, {
     method: 'PATCH',
@@ -296,7 +313,7 @@ export async function updateTaskStatus(
 export async function reportTaskIssue(
   visitId: string,
   taskId: string,
-  type: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+  type: 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm',
   workerId: string,
 ): Promise<ScenarioContext> {
   return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}/issue`, {
@@ -340,6 +357,15 @@ export async function translateText(
   request: TranslationRequest,
 ): Promise<TranslationResponse> {
   return requestJson('/translate', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }, 120000);
+}
+
+export async function analyseRiskNote(
+  request: RiskAnalysisRequest,
+): Promise<RiskAnalysisResponse> {
+  return requestJson('/ai/risk/analyse', {
     method: 'POST',
     body: JSON.stringify(request),
   }, 120000);

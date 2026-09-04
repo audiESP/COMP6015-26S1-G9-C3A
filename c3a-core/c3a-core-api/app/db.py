@@ -45,6 +45,7 @@ def open_database_pool() -> None:
         max_size=int(os.getenv("DATABASE_POOL_MAX_SIZE", "5")),
         timeout=float(os.getenv("DATABASE_POOL_TIMEOUT_SECONDS", "10")),
         kwargs={"row_factory": dict_row},
+        check=ConnectionPool.check_connection,
         open=True,
     )
     logger.info(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -260,6 +260,19 @@ class TranslationResponse(BaseModel):
     translatedText: str
 
 
+class PatientSummaryRecord(BaseModel):
+    category: str
+    table: str
+    label: str
+    detail: Optional[str] = None
+
+
+class PatientSummaryResponse(BaseModel):
+    summary: str
+    patientId: str
+    records: list[PatientSummaryRecord] = []
+
+
 class UploadRequest(BaseModel):
     base64: str
     mimeType: str
@@ -282,3 +295,31 @@ class AiTranslationResponse(BaseModel):
     sourceLanguage: str
     targetLanguage: str
     translatedText: str
+
+
+class RiskAnalysisRequest(BaseModel):
+    note: str
+    patientContext: Optional[PatientContext] = None
+    workerContext: Optional[WorkerContext] = None
+    visitContext: Optional[VisitContext] = None
+    currentTaskContext: Optional[CareTaskContext] = None
+    taskContext: Optional[list[CareTaskContext]] = None
+    eventContext: Optional[list[ScenarioEventContext]] = None
+    riskContext: Optional[list[RiskContext]] = None
+
+
+class RiskSuggestion(BaseModel):
+    riskType: str
+    level: Literal["low", "moderate", "high"]
+    confidence: float
+    reason: str
+    recommendedActions: list[str]
+    requiresConfirmation: bool = True
+
+
+class RiskAnalysisResponse(BaseModel):
+    suggestions: list[RiskSuggestion] = []
+    safetyBoundary: dict[str, bool] = {
+        "diagnosisMade": False,
+        "medicationChangeSuggested": False,
+    }

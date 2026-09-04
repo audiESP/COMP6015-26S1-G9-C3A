@@ -10,7 +10,14 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .logging_utils import preview_object
-from .schemas import AiChatResponse, AiTranslationResponse, ChatRequest, TranslationRequest
+from .schemas import (
+    AiChatResponse,
+    AiTranslationResponse,
+    ChatRequest,
+    RiskAnalysisRequest,
+    RiskAnalysisResponse,
+    TranslationRequest,
+)
 
 
 DEFAULT_AI_BASE_URL = "http://127.0.0.1:8001"
@@ -109,6 +116,75 @@ class AiClient:
                 exc,
                 exc_info=True,
             )
+            raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
+
+    async def patient_summary(
+        self,
+        patient_id: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        self.logger.info(
+            "AI client patient summary started base_url=%s request_id=%s patient_id=%s",
+            self.base_url,
+            request_id,
+            patient_id,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/ai/patient-summary",
+                    json={"patientId": patient_id},
+                    headers=_request_headers(request_id),
+                )
+                response.raise_for_status()
+                payload = response.json()
+                self.logger.info(
+                    "AI client patient summary completed request_id=%s status=%s elapsed_ms=%.1f",
+                    request_id,
+                    response.status_code,
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return payload
+        except httpx.HTTPStatusError as exc:
+            self.logger.error(
+                "AI client patient summary http error request_id=%s status=%s body=%r",
+                request_id,
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
+            if exc.response.status_code == 404:
+                raise AiServiceUnavailable("no_patient_records") from exc
+            raise AiServiceUnavailable(
+                f"AI service returned HTTP {exc.response.status_code}"
+            ) from exc
+        except AiServiceUnavailable:
+            raise
+        except Exception as exc:
+            self.logger.error(
+                "AI client patient summary failed request_id=%s error=%s",
+                request_id,
+                exc,
+                exc_info=True,
+            )
+            raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
+
+    async def analyse_risk(
+        self,
+        request: RiskAnalysisRequest,
+        request_id: str | None = None,
+    ) -> RiskAnalysisResponse:
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/ai/risk/analyse",
+                    json=request.model_dump(exclude_none=True),
+                    headers=_request_headers(request_id),
+                )
+                response.raise_for_status()
+                return RiskAnalysisResponse.model_validate(response.json())
+        except Exception as exc:
+            self.logger.error("AI risk analysis failed request_id=%s error=%s", request_id, exc, exc_info=True)
             raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
 
     async def stream_chat(

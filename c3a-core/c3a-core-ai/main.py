@@ -14,7 +14,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import uvicorn
 from dotenv import load_dotenv
@@ -212,6 +212,34 @@ class TranslationResponse(BaseModel):
     translatedText: str
 
 
+class RiskAnalysisRequest(BaseModel):
+    note: str
+    patientContext: Optional[PatientContext] = None
+    workerContext: Optional[WorkerContext] = None
+    visitContext: Optional[VisitContext] = None
+    currentTaskContext: Optional[CareTaskContext] = None
+    taskContext: Optional[list[CareTaskContext]] = None
+    eventContext: Optional[list[ScenarioEventContext]] = None
+    riskContext: Optional[list[RiskContext]] = None
+
+
+class RiskSuggestion(BaseModel):
+    riskType: str
+    level: Literal["low", "moderate", "high"]
+    confidence: float
+    reason: str
+    recommendedActions: list[str]
+    requiresConfirmation: bool = True
+
+
+class RiskAnalysisResponse(BaseModel):
+    suggestions: list[RiskSuggestion] = []
+    safetyBoundary: dict[str, bool] = {
+        "diagnosisMade": False,
+        "medicationChangeSuggested": False,
+    }
+
+
 @dataclass(frozen=True)
 class PreparedChat:
     latest_user_query: str
@@ -229,6 +257,19 @@ class PreparedChat:
 class RagSearchRequest(BaseModel):
     query: str
     topK: Optional[int] = None
+
+
+class PatientSummaryRequest(BaseModel):
+    patientId: str
+    patientContext: Optional[PatientContext] = None
+
+
+class PatientSummaryResponse(BaseModel):
+    summary: str
+    patientId: str
+    records: list[dict[str, Any]] = []
+    database: dict[str, Any] = {}
+    model: dict[str, Any] = {}
 
 
 @app.on_event("startup")
@@ -269,6 +310,45 @@ def _preview(text: str, limit: int = 180) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[:limit]}..."
+
+
+def _risk_analysis_prompt(req: RiskAnalysisRequest) -> str:
+    context = {
+        "patient": req.patientContext.model_dump(exclude_none=True) if req.patientContext else {},
+        "worker": req.workerContext.model_dump(exclude_none=True) if req.workerContext else {},
+        "visit": req.visitContext.model_dump(exclude_none=True) if req.visitContext else {},
+        "current_task": req.currentTaskContext.model_dump(exclude_none=True) if req.currentTaskContext else {},
+        "tasks": [item.model_dump(exclude_none=True) for item in (req.taskContext or [])],
+        "events": [item.model_dump(exclude_none=True) for item in (req.eventContext or [])],
+        "active_risks": [item.model_dump(exclude_none=True) for item in (req.riskContext or [])],
+    }
+    return (
+        "Analyse the following care-worker observation as an auxiliary risk suggestion. "
+        "Return JSON only, with this exact shape: "
+        '{"suggestions":[{"riskType":"string","level":"low|moderate|high",'
+        '"confidence":0.0,"reason":"string","recommendedActions":["string"],'
+        '"requiresConfirmation":true}]}. '
+        "Use only evidence in the note and supplied context. Do not diagnose, prescribe, "
+        "change medication, or create/resolve an official alert. Suggestions must require "
+        "human confirmation. Return an empty suggestions array when no actionable concern "
+        "is supported. For medication notes, never recommend an additional dose or dose change.\n\n"
+        f"Observation note:\n{req.note}\n\n"
+        f"Context JSON:\n{json.dumps(context, ensure_ascii=True)}"
+    )
+
+
+def _parse_json_object(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("No JSON object found")
+    payload = json.loads(cleaned[start : end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError("Risk analysis payload is not an object")
+    return payload
 
 
 def _query_preview(text: str, query: str, limit: int = 500) -> str:
@@ -377,6 +457,48 @@ async def health():
     }
 
 
+@app.post("/ai/patient-summary", response_model=PatientSummaryResponse)
+async def patient_summary(req: PatientSummaryRequest):
+    started_at = time.perf_counter()
+    logger.info("AI POST /ai/patient-summary received patient_id=%s", req.patientId)
+    db_result = await db_context_retriever.patient_summary_context(req.patientId)
+    if not db_result.context:
+        logger.warning("AI patient summary found no database rows patient_id=%s", req.patientId)
+        raise HTTPException(status_code=404, detail="No database records found for this patient")
+
+    prompt = (
+        "You are the Virtual Health Assistant for a home-care worker. "
+        "Synthesise the following retrieved PostgreSQL patient data (condition, medication, "
+        "allergy, encounter, observation, and CALD information) into a single concise, "
+        "contextual patient summary to present to the home-care worker before or at visit start. "
+        "Combine the data into one coherent response. Use only the supplied data; do not invent "
+        "clinical facts. Use these short headings exactly:\n"
+        "1. Overview\n2. Active Conditions\n3. Medications\n4. Allergies\n"
+        "5. Recent Encounters and Observations\n6. CALD and Communication Needs\n7. Care Focus for this Visit\n\n"
+        f"{db_result.context}"
+    )
+    try:
+        summary = await service.generate_reply(
+            messages=[("user", prompt)],
+            patient=req.patientContext,
+        )
+    except OllamaServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info(
+        "AI POST /ai/patient-summary completed patient_id=%s elapsed_ms=%.1f chars=%s",
+        req.patientId,
+        (time.perf_counter() - started_at) * 1000,
+        len(summary),
+    )
+    return PatientSummaryResponse(
+        summary=summary,
+        patientId=req.patientId,
+        records=db_result.metadata.get("records", []),
+        database=db_result.metadata,
+        model=service.status(),
+    )
+
+
 @app.post("/ai/chat", response_model=AiChatResponse)
 async def chat(req: AiChatRequest):
     started_at = time.perf_counter()
@@ -441,6 +563,51 @@ async def chat(req: AiChatRequest):
     logger.debug("AI POST /ai/chat response=%s",
                  preview_object(response.model_dump()))
     return response
+
+
+@app.post("/ai/risk/analyse", response_model=RiskAnalysisResponse)
+async def analyse_risk(req: RiskAnalysisRequest):
+    note = req.note.strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="Risk note must not be empty")
+
+    prompt = _risk_analysis_prompt(req)
+    try:
+        reply = await service.generate_reply(
+            messages=[("user", prompt)],
+            patient=req.patientContext,
+            worker=req.workerContext,
+            visit=req.visitContext,
+            current_task=req.currentTaskContext,
+            tasks=req.taskContext or [],
+            events=req.eventContext or [],
+            risks=req.riskContext or [],
+        )
+    except OllamaServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        payload = _parse_json_object(reply)
+        raw_suggestions = payload.get("suggestions", [])
+        if not isinstance(raw_suggestions, list):
+            raise ValueError("Risk analysis suggestions are not an array")
+        suggestions = [
+            # The service boundary owns this invariant even if the model ignores the prompt.
+            RiskSuggestion.model_validate({**item, "requiresConfirmation": True})
+            for item in raw_suggestions
+            if isinstance(item, dict)
+        ]
+    except (ValueError, TypeError, KeyError) as exc:
+        logger.warning("AI risk analysis returned invalid JSON: %s", exc)
+        suggestions = []
+
+    return RiskAnalysisResponse(
+        suggestions=suggestions,
+        safetyBoundary={
+            "diagnosisMade": False,
+            "medicationChangeSuggested": False,
+        },
+    )
 
 
 @app.post("/ai/chat/stream")

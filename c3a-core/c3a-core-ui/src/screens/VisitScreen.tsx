@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -21,7 +21,8 @@ import { HistorySidebar } from '../components/HistorySidebar';
 import { PatientModal } from '../components/PatientModal';
 import { useChat } from '../hooks/useChat';
 import '../i18n';
-import { generateVisitReport, setApiBaseUrl, translateText } from '../services/api';
+import { analyseRiskNote, fetchPatientSummary, generateVisitReport, setApiBaseUrl, translateText } from '../services/api';
+import type { PatientSummaryRecord } from '../services/api';
 import { useChatStore } from '../store/chatStore';
 import { useScenarioStore } from '../store/scenarioStore';
 import {
@@ -35,6 +36,7 @@ import {
   Message,
   PatientInfo,
   RiskAlert,
+  RiskSuggestion,
   TranslationResponse,
   VisitContext,
   VisitLifecycleStep,
@@ -47,7 +49,7 @@ interface Props {
 }
 
 type VisitSection = 'tasks' | 'patient' | 'translation' | 'assistant' | 'summary';
-type TaskIssueType = 'cannot_complete' | 'patient_declined' | 'safety_concern';
+type TaskIssueType = 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm';
 
 const sections: { id: VisitSection; label: string }[] = [
   { id: 'tasks', label: 'Tasks' },
@@ -173,6 +175,15 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   const [visitReport, setVisitReport] = useState('');
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportGenerating, setReportGenerating] = useState(false);
+  const [patientSummary, setPatientSummary] = useState('');
+  const [summaryRecords, setSummaryRecords] = useState<PatientSummaryRecord[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [riskReviewOpen, setRiskReviewOpen] = useState(false);
+  const [riskReviewNote, setRiskReviewNote] = useState('');
+  const [riskSuggestions, setRiskSuggestions] = useState<RiskSuggestion[]>([]);
+  const [riskReviewLoading, setRiskReviewLoading] = useState(false);
+  const [riskReviewError, setRiskReviewError] = useState<string | null>(null);
 
   const {
     scenario,
@@ -218,6 +229,31 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
   });
 
   const messages: Message[] = activeSession?.messages ?? [];
+  const patientId = scenario.patient.id;
+
+  useEffect(() => {
+    let cancelled = false;
+    setPatientSummary('');
+    setSummaryRecords([]);
+    setSummaryError(null);
+    setSummaryLoading(true);
+    fetchPatientSummary(patientId)
+      .then((res) => {
+        if (!cancelled) {
+          setPatientSummary(res.summary);
+          setSummaryRecords(res.records ?? []);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setSummaryError(err instanceof Error ? err.message : 'Summary unavailable');
+      })
+      .finally(() => {
+        if (!cancelled) setSummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
   const completedTasks = scenario.tasks.filter((task) => task.status === 'completed').length;
   const priorityAlert = activeAlerts[0];
   const visitStarted = scenario.visit.status !== 'scheduled' && scenario.lifecycleStep !== 'pre_visit';
@@ -395,6 +431,30 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
   };
 
+  const handleAnalyseRiskNote = useCallback(async () => {
+    if (!riskReviewNote.trim() || riskReviewLoading) return;
+    setRiskReviewLoading(true);
+    setRiskReviewError(null);
+    setRiskSuggestions([]);
+    try {
+      const result = await analyseRiskNote({
+        note: riskReviewNote.trim(),
+        patientContext: scenario.patient,
+        workerContext: scenario.worker,
+        visitContext: scenario.visit,
+        currentTaskContext: selectedTask,
+        taskContext: scenario.tasks,
+        eventContext: scenario.events,
+        riskContext: scenario.alerts,
+      });
+      setRiskSuggestions(result.suggestions);
+    } catch (error) {
+      setRiskReviewError(error instanceof Error ? error.message : 'Risk analysis failed.');
+    } finally {
+      setRiskReviewLoading(false);
+    }
+  }, [riskReviewLoading, riskReviewNote, scenario, selectedTask]);
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" backgroundColor="#F7FAF8" />
@@ -515,6 +575,10 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               worker={scenario.worker.name}
               location={scenario.visit.location}
               alerts={activeAlerts}
+              summary={patientSummary}
+              summaryRecords={summaryRecords}
+              summaryLoading={summaryLoading}
+              summaryError={summaryError}
             />
           )}
 
@@ -534,6 +598,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               onSuggestedQuestion={handleSend}
               onOpenHistory={() => setHistoryOpen(true)}
               onEditPatient={() => setPatientModalOpen(true)}
+              onAnalyseRisk={() => setRiskReviewOpen(true)}
             />
           )}
 
@@ -606,6 +671,21 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
         onClose={() => setPatientModalOpen(false)}
       />
 
+      <RiskReviewModal
+        visible={riskReviewOpen}
+        note={riskReviewNote}
+        suggestions={riskSuggestions}
+        loading={riskReviewLoading}
+        error={riskReviewError}
+        onChange={(value) => {
+          setRiskReviewNote(value);
+          setRiskSuggestions([]);
+          setRiskReviewError(null);
+        }}
+        onAnalyse={handleAnalyseRiskNote}
+        onClose={() => setRiskReviewOpen(false)}
+      />
+
       <FinishVisitFormModal
         visible={finishFormOpen}
         form={careOutcomeForm}
@@ -648,6 +728,75 @@ function isCareOutcomeFormComplete(form: CareOutcomeFormAnswers) {
   if (form.wellbeingConcerns.includes('Other') && !form.wellbeingOther.trim()) return false;
   if (form.followUpRequired !== 'No follow-up required' && !form.followUpDetails.trim()) return false;
   return true;
+}
+
+function RiskReviewModal({
+  visible,
+  note,
+  suggestions,
+  loading,
+  error,
+  onChange,
+  onAnalyse,
+  onClose,
+}: {
+  visible: boolean;
+  note: string;
+  suggestions: RiskSuggestion[];
+  loading: boolean;
+  error: string | null;
+  onChange: (value: string) => void;
+  onAnalyse: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.finishModal}>
+          <View style={styles.finishModalHeader}>
+            <View style={styles.currentTaskCopy}>
+              <Text style={styles.priorityLabel}>AI RISK REVIEW</Text>
+              <Text style={styles.currentTaskTitle}>Review a care note</Text>
+              <Text style={styles.currentTaskDetail}>
+                AI suggestions require worker confirmation and do not create an official alert.
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.modalCloseButton} onPress={onClose} activeOpacity={0.75}>
+              <Text style={styles.modalCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.finishFormScroll} contentContainerStyle={styles.finishFormContent}>
+            <TextField label="Observation or care-worker note" value={note} onChange={onChange} />
+            {error && <Text style={styles.errorText}>{error}</Text>}
+            {suggestions.length === 0 && !loading && !error && (
+              <Text style={styles.currentTaskDetail}>
+                Enter a factual observation, such as a delayed medication, refusal, mobility concern, or communication barrier.
+              </Text>
+            )}
+            {loading && <Text style={styles.currentTaskDetail}>Analysing the note...</Text>}
+            {suggestions.map((suggestion) => (
+              <View key={`${suggestion.riskType}-${suggestion.reason}`} style={styles.riskSuggestionCard}>
+                <Text style={styles.priorityLabel}>{suggestion.level.toUpperCase()} SUGGESTION</Text>
+                <Text style={styles.alertTitle}>{suggestion.riskType}</Text>
+                <Text style={styles.alertMessage}>{suggestion.reason}</Text>
+                {suggestion.recommendedActions.map((action) => (
+                  <Text key={action} style={styles.suggestionAction}>• {action}</Text>
+                ))}
+                <Text style={styles.suggestionConfirmation}>Worker confirmation required</Text>
+              </View>
+            ))}
+          </ScrollView>
+          <View style={styles.finishModalFooter}>
+            <ActionButton
+              label={loading ? 'Analysing...' : 'Analyse note'}
+              onPress={onAnalyse}
+              disabled={!note.trim() || loading}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 }
 
 function FinishVisitFormModal({
@@ -1189,6 +1338,7 @@ function AssistantTab({
   onSuggestedQuestion,
   onOpenHistory,
   onEditPatient,
+  onAnalyseRisk,
 }: {
   error: string | null;
   messages: Message[];
@@ -1197,6 +1347,7 @@ function AssistantTab({
   onSuggestedQuestion: (text: string, attachments: Attachment[]) => void;
   onOpenHistory: () => void;
   onEditPatient: () => void;
+  onAnalyseRisk: () => void;
 }) {
   return (
     <View style={styles.tabPanel}>
@@ -1210,6 +1361,9 @@ function AssistantTab({
           </TouchableOpacity>
           <TouchableOpacity style={styles.smallButton} onPress={onEditPatient} activeOpacity={0.75}>
             <Text style={styles.smallButtonText}>Patient</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.smallButton} onPress={onAnalyseRisk} activeOpacity={0.75}>
+            <Text style={styles.smallButtonText}>Review note</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.suggestedQuestionRow}>
@@ -1523,14 +1677,39 @@ function PatientDetailsPanel({
   worker,
   location,
   alerts,
+  summary,
+  summaryRecords,
+  summaryLoading,
+  summaryError,
 }: {
   patient: PatientInfo;
   worker: string;
   location: string;
   alerts: RiskAlert[];
+  summary: string;
+  summaryRecords: PatientSummaryRecord[];
+  summaryLoading: boolean;
+  summaryError: string | null;
 }) {
   return (
     <View style={styles.tabPanel}>
+      <SectionHeader title="AI patient summary" detail="From clinical records" />
+      <View style={styles.contextPanel}>
+        {summaryLoading ? (
+          <Text style={styles.summaryStatusText}>Generating patient summary…</Text>
+        ) : summaryError ? (
+          <Text style={styles.summaryStatusText}>Summary unavailable right now.</Text>
+        ) : summary ? (
+          <Text style={styles.summaryBody}>{summary}</Text>
+        ) : (
+          <Text style={styles.summaryStatusText}>No summary available for this patient.</Text>
+        )}
+      </View>
+
+      {!summaryLoading && !summaryError && summaryRecords.length > 0 && (
+        <SummarySources records={summaryRecords} />
+      )}
+
       <SectionHeader title="Must know" detail="Care preferences" />
       <View style={styles.contextPanel}>
         <SummaryLine label="Language" value={`${patient.preferredLanguage ?? 'Unknown'}${patient.interpreterRequired ? ' · interpreter recommended' : ''}`} />
@@ -1571,6 +1750,81 @@ function PatientDetailsPanel({
         <SummaryLine label="Worker" value={worker} />
         <SummaryLine label="Visit" value={location} />
       </View>
+    </View>
+  );
+}
+
+const summarySourceCategoryMeta: Record<string, { title: string }> = {
+  patient: { title: 'Patient record' },
+  cald_profile: { title: 'CALD profile' },
+  condition: { title: 'Conditions' },
+  medication: { title: 'Medication records' },
+  allergy: { title: 'Allergies' },
+  progress_note: { title: 'Progress notes / encounters' },
+  observation: { title: 'Observations' },
+};
+
+function SummarySources({ records }: { records: PatientSummaryRecord[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+
+  const groups = useMemo(() => {
+    const byCategory = new Map<string, PatientSummaryRecord[]>();
+    for (const record of records) {
+      const list = byCategory.get(record.category) ?? [];
+      list.push(record);
+      byCategory.set(record.category, list);
+    }
+    return Array.from(byCategory.entries());
+  }, [records]);
+
+  const toggleGroup = (category: string) => {
+    setOpenGroups((current) => ({ ...current, [category]: !current[category] }));
+  };
+
+  return (
+    <View style={styles.sourcesPanel}>
+      <TouchableOpacity
+        style={styles.sourcesHeader}
+        onPress={() => setExpanded((current) => !current)}
+        accessibilityRole="button"
+      >
+        <View style={styles.sourcesHeaderText}>
+          <Text style={styles.sourcesTitle}>Sources used for this summary</Text>
+          <Text style={styles.sourcesSubtitle}>
+            {records.length} record{records.length === 1 ? '' : 's'} the AI referenced from the patient dataset.
+          </Text>
+        </View>
+        <Text style={styles.sourcesChevron}>{expanded ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={styles.sourcesBody}>
+          {groups.map(([category, items]) => {
+            const isOpen = !!openGroups[category];
+            return (
+              <View key={category} style={styles.sourcesGroup}>
+                <TouchableOpacity
+                  style={styles.sourcesGroupHeader}
+                  onPress={() => toggleGroup(category)}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.sourcesGroupTitle}>
+                    {summarySourceCategoryMeta[category]?.title ?? category} ({items.length})
+                  </Text>
+                  <Text style={styles.sourcesChevron}>{isOpen ? '▲' : '▼'}</Text>
+                </TouchableOpacity>
+                {isOpen && items.map((item, index) => (
+                  <View key={`${item.label}-${index}`} style={styles.sourceItem}>
+                    <Text style={styles.sourceLabel}>{item.label}</Text>
+                    {item.detail ? <Text style={styles.sourceDetail}>{item.detail}</Text> : null}
+                  </View>
+                ))}
+              </View>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
@@ -1892,6 +2146,13 @@ function TaskRow({
           <ActionButton label="Cannot complete" tone="warn" onPress={() => onIssue('cannot_complete')} />
           <ActionButton label="Patient declined" tone="warn" onPress={() => onIssue('patient_declined')} />
           <ActionButton label="Safety concern" tone="danger" onPress={() => onIssue('safety_concern')} />
+          {task.type === 'medication' && (
+            <>
+              <ActionButton label="Medication delayed" tone="warn" onPress={() => onIssue('medication_delayed')} />
+              <ActionButton label="Medication unavailable" tone="warn" onPress={() => onIssue('medication_unavailable')} />
+              <ActionButton label="Unable to confirm medication" tone="warn" onPress={() => onIssue('medication_unable_to_confirm')} />
+            </>
+          )}
         </View>
       )}
     </View>
@@ -2196,6 +2457,16 @@ const styles = StyleSheet.create({
   alertLow: { borderLeftColor: '#2E6F73', backgroundColor: '#F0F8F7' },
   alertTitle: { color: '#16231E', fontSize: 14, fontWeight: '800' },
   alertMessage: { color: '#3D4E47', fontSize: 13, lineHeight: 19, marginTop: 4 },
+  riskSuggestionCard: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D6E5DF',
+    backgroundColor: '#F4FAF7',
+    padding: 12,
+    marginTop: 10,
+  },
+  suggestionAction: { color: '#3D4E47', fontSize: 13, lineHeight: 19, marginTop: 5 },
+  suggestionConfirmation: { color: '#0D7377', fontSize: 12, fontWeight: '700', marginTop: 9 },
   taskList: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginBottom: 12 },
   taskListInline: { backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', overflow: 'hidden', marginTop: 12 },
   taskRowContainer: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E4ECE8' },
@@ -2293,6 +2564,21 @@ const styles = StyleSheet.create({
   timelineTitle: { color: '#16231E', fontSize: 13, fontWeight: '800' },
   timelineTime: { color: '#60746B', fontSize: 12, flex: 1, textAlign: 'right' },
   emptyTimeline: { color: '#60746B', fontSize: 13 },
+  summaryBody: { color: '#16231E', fontSize: 13, lineHeight: 20, paddingVertical: 10 },
+  summaryStatusText: { color: '#60746B', fontSize: 13, paddingVertical: 12 },
+  sourcesPanel: { backgroundColor: '#F3F6F4', borderRadius: 8, borderWidth: 1, borderColor: '#D9E2DE', padding: 12, marginTop: 12 },
+  sourcesHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  sourcesHeaderText: { flex: 1, gap: 3 },
+  sourcesChevron: { color: '#60746B', fontSize: 13 },
+  sourcesBody: { marginTop: 10, gap: 10 },
+  sourcesTitle: { color: '#16231E', fontSize: 13, fontWeight: '800' },
+  sourcesSubtitle: { color: '#60746B', fontSize: 12, lineHeight: 17 },
+  sourcesGroup: { gap: 6 },
+  sourcesGroupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  sourcesGroupTitle: { color: '#1E3A2F', fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
+  sourceItem: { backgroundColor: '#FFFFFF', borderRadius: 6, borderWidth: 1, borderColor: '#E3EAE6', paddingHorizontal: 10, paddingVertical: 8 },
+  sourceLabel: { color: '#16231E', fontSize: 12, fontWeight: '600' },
+  sourceDetail: { color: '#60746B', fontSize: 11, marginTop: 2, lineHeight: 15 },
   drawerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', justifyContent: 'flex-start' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.34)', justifyContent: 'flex-end' },
   finishModal: {

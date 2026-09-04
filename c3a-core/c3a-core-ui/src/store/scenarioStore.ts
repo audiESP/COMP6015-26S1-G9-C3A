@@ -195,7 +195,7 @@ function applyLocalMedicationSupport(
 
 function localIssueDetails(
   taskLabel: string,
-  issueType: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+  issueType: 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm',
   taskType?: string,
 ): {
   note: string;
@@ -221,16 +221,55 @@ function localIssueDetails(
   }
 
   if (taskType === 'medication') {
+    const medicationDetails = {
+      medication_delayed: {
+        note: `${taskLabel}: medication delayed`,
+        eventType: 'medication_delayed' as ScenarioEvent['type'],
+        title: 'Medication support is delayed',
+        message: 'Document the delay, do not double doses, and seek nurse or supervisor advice.',
+        level: 'high' as RiskAlert['level'],
+        visitStatus: 'delayed' as VisitStatus,
+        lifecycleStep: 'incident_active' as ScenarioContext['lifecycleStep'],
+      },
+      medication_unavailable: {
+        note: `${taskLabel}: medication unavailable`,
+        eventType: 'medication_unavailable' as ScenarioEvent['type'],
+        title: 'Medication is unavailable',
+        message: 'Record that the medication was unavailable and contact the appropriate supervisor or nurse.',
+        level: 'high' as RiskAlert['level'],
+        visitStatus: 'delayed' as VisitStatus,
+        lifecycleStep: 'incident_active' as ScenarioContext['lifecycleStep'],
+      },
+      medication_unable_to_confirm: {
+        note: `${taskLabel}: medication could not be confirmed`,
+        eventType: 'medication_unable_to_confirm' as ScenarioEvent['type'],
+        title: 'Medication support could not be confirmed',
+        message: 'Do not assume the medication was taken. Document the uncertainty and arrange follow-up.',
+        level: 'moderate' as RiskAlert['level'],
+        visitStatus: 'follow_up_required' as VisitStatus,
+        lifecycleStep: 'review' as ScenarioContext['lifecycleStep'],
+      },
+      patient_declined: {
+        note: `${taskLabel}: patient declined`,
+        eventType: 'medication_declined' as ScenarioEvent['type'],
+        title: 'Patient declined medication support',
+        message: 'Record the refusal and reason, then arrange follow-up according to the care plan.',
+        level: 'moderate' as RiskAlert['level'],
+        visitStatus: 'follow_up_required' as VisitStatus,
+        lifecycleStep: 'review' as ScenarioContext['lifecycleStep'],
+      },
+    } as const;
+    const details = medicationDetails[issueType === 'cannot_complete' ? 'medication_delayed' : issueType] ?? medicationDetails.medication_delayed;
     return {
-      note: `${taskLabel}: ${issueType === 'patient_declined' ? 'patient declined' : 'could not complete'}`,
-      visitStatus: 'delayed',
-      lifecycleStep: 'incident_active',
-      eventType: 'medication_delayed',
+      note: details.note,
+      visitStatus: details.visitStatus,
+      lifecycleStep: details.lifecycleStep,
+      eventType: details.eventType,
       alert: {
         id: `local-medication-${Date.now()}`,
-        level: 'high',
-        title: 'Medication timing issue',
-        message: 'Document the delay and seek nurse or supervisor advice if needed.',
+        level: details.level,
+        title: details.title,
+        message: details.message,
         source: 'rules',
       },
     };
@@ -254,7 +293,7 @@ function localIssueDetails(
 function applyLocalTaskIssue(
   current: ScenarioContext,
   taskId: string,
-  issueType: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+  issueType: 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm',
 ): ScenarioContext {
   const task = current.tasks.find((item) => item.id === taskId);
   const details = localIssueDetails(task?.label ?? 'Care task', issueType, task?.type);
@@ -397,9 +436,11 @@ export function useScenarioStore() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const savingRef = useRef(false);
+  const backendLiveRef = useRef(false);
 
   const refreshQueue = useCallback(async (activeId?: string) => {
     const response = await fetchVisitQueue(DEFAULT_WORKER_ID, DEFAULT_SHIFT_DATE);
+    backendLiveRef.current = true;
     setVisitQueue(response.visits);
     if (activeId) {
       const index = response.visits.findIndex((visit) => visit.id === activeId);
@@ -413,6 +454,7 @@ export function useScenarioStore() {
     setError(null);
     try {
       const response = await fetchVisitQueue(DEFAULT_WORKER_ID, DEFAULT_SHIFT_DATE);
+      backendLiveRef.current = true;
       setVisitQueue(response.visits);
       const firstVisit = response.visits[0];
       if (firstVisit) {
@@ -421,6 +463,7 @@ export function useScenarioStore() {
         setActiveVisitIndex(0);
       }
     } catch (err) {
+      backendLiveRef.current = false;
       setError(err instanceof Error ? err.message : 'Failed to load visits.');
     } finally {
       setIsLoading(false);
@@ -451,11 +494,19 @@ export function useScenarioStore() {
     setIsSaving(true);
     setError(null);
     try {
+      if (!backendLiveRef.current && offlineFallback) {
+        const nextScenario = offlineFallback(scenario);
+        applyScenario(nextScenario);
+        setError(OFFLINE_WORKFLOW_MESSAGE);
+        return nextScenario;
+      }
       const nextScenario = await operation();
+      backendLiveRef.current = true;
       applyScenario(nextScenario);
       return nextScenario;
     } catch (err) {
       if (offlineFallback && isTransientNetworkError(err)) {
+        backendLiveRef.current = false;
         const nextScenario = offlineFallback(scenario);
         applyScenario(nextScenario);
         setError(OFFLINE_WORKFLOW_MESSAGE);
@@ -487,7 +538,7 @@ export function useScenarioStore() {
 
   const reportTaskIssue = useCallback((
     taskId: string,
-    type: 'cannot_complete' | 'patient_declined' | 'safety_concern',
+    type: 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm',
   ) => {
     return runMutation(() =>
       reportTaskIssueApi(scenario.visit.id, taskId, type, scenario.worker.id),
