@@ -225,6 +225,7 @@ class ChatRequest(BaseModel):
     riskContext: Optional[list[RiskContext]] = None
     checklistContext: Optional[list[IncidentChecklistItem]] = None
     attachments: Optional[list[AttachmentData]] = None
+    responseWordLimit: Optional[int] = None
 
 
 class ChatResponse(BaseModel):
@@ -247,6 +248,18 @@ class GenerateVisitReportResponse(BaseModel):
     report: str
 
 
+class TranslationRequest(BaseModel):
+    text: str
+    sourceLanguage: Optional[str] = None
+    targetLanguage: str
+
+
+class TranslationResponse(BaseModel):
+    sourceLanguage: str
+    targetLanguage: str
+    translatedText: str
+
+
 class UploadRequest(BaseModel):
     base64: str
     mimeType: str
@@ -263,3 +276,9 @@ class AiChatResponse(BaseModel):
     sources: list[str] = []
     rag: dict[str, Any] = {}
     model: dict[str, Any] = {}
+
+
+class AiTranslationResponse(BaseModel):
+    sourceLanguage: str
+    targetLanguage: str
+    translatedText: str

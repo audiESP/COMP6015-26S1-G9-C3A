@@ -8,6 +8,8 @@ import {
   MedicationSupportRecord,
   PatientInfo,
   ScenarioContext,
+  TranslationRequest,
+  TranslationResponse,
   VisitReportRequest,
   VisitReportResponse,
   VisitQueueItem,
@@ -332,6 +334,15 @@ export async function generateVisitReport(
     method: 'POST',
     body: JSON.stringify(request),
   }, 300000);
+}
+
+export async function translateText(
+  request: TranslationRequest,
+): Promise<TranslationResponse> {
+  return requestJson('/translate', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }, 120000);
 }
 
 /**

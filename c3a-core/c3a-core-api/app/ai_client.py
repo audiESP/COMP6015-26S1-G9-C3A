@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .logging_utils import preview_object
-from .schemas import AiChatResponse, ChatRequest
+from .schemas import AiChatResponse, AiTranslationResponse, ChatRequest, TranslationRequest
 
 
 DEFAULT_AI_BASE_URL = "http://127.0.0.1:8001"
@@ -151,6 +151,58 @@ class AiClient:
             )
             raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
 
+    async def translate(
+        self,
+        request: TranslationRequest,
+        request_id: str | None = None,
+    ) -> AiTranslationResponse:
+        started_at = time.perf_counter()
+        self.logger.info(
+            "AI client translate started base_url=%s request_id=%s timeout=%s target_language=%s text_preview=%r",
+            self.base_url,
+            request_id,
+            self.timeout,
+            request.targetLanguage,
+            _text_preview(request.text),
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/ai/translate",
+                    json=request.model_dump(exclude_none=True),
+                    headers=_request_headers(request_id),
+                )
+                response.raise_for_status()
+                payload = response.json()
+                self.logger.info(
+                    "AI client translate completed request_id=%s status=%s elapsed_ms=%.1f",
+                    request_id,
+                    response.status_code,
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return AiTranslationResponse.model_validate(payload)
+        except httpx.HTTPStatusError as exc:
+            self.logger.error(
+                "AI client translate http error request_id=%s status=%s elapsed_ms=%.1f body=%r",
+                request_id,
+                exc.response.status_code,
+                (time.perf_counter() - started_at) * 1000,
+                exc.response.text[:500],
+                exc_info=True,
+            )
+            raise AiServiceUnavailable(
+                f"AI service returned HTTP {exc.response.status_code}: {exc.response.text}"
+            ) from exc
+        except Exception as exc:
+            self.logger.error(
+                "AI client translate failed request_id=%s elapsed_ms=%.1f error=%s",
+                request_id,
+                (time.perf_counter() - started_at) * 1000,
+                exc,
+                exc_info=True,
+            )
+            raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
+
 
 def _request_headers(request_id: str | None) -> dict[str, str]:
     if not request_id:
@@ -161,6 +213,10 @@ def _request_headers(request_id: str | None) -> dict[str, str]:
 def _latest_user_preview(request: ChatRequest) -> str:
     for message in reversed(request.messages):
         if message.role == "user":
-            compact = " ".join(message.content.split())
-            return compact[:180] + ("..." if len(compact) > 180 else "")
+            return _text_preview(message.content)
     return ""
+
+
+def _text_preview(text: str) -> str:
+    compact = " ".join(text.split())
+    return compact[:180] + ("..." if len(compact) > 180 else "")

@@ -38,6 +38,12 @@ Do not diagnose or replace professional clinical judgment. Be concise,
 accurate, and compassionate."""
 
 
+TRANSLATION_SYSTEM_PROMPT = """You translate short real-time conversations between a home-care worker and an older patient.
+Detect the source language unless it is explicitly provided. Translate only the user's text into the requested target language.
+Preserve names, medication names, measurements, dates, times, and clinical terms accurately. Keep the tone plain, respectful, and easy for an older patient or care worker to understand.
+Return only compact JSON with these exact string fields: sourceLanguage, targetLanguage, translatedText."""
+
+
 class OllamaServiceError(RuntimeError):
     """Raised when Ollama cannot provide a valid model response."""
 
@@ -54,11 +60,12 @@ class OllamaService:
     ):
         self.enabled = enabled
         self.base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-        self.model_name = os.getenv("OLLAMA_MODEL", "llama3:latest").strip()
+        self.model_name = os.getenv("OLLAMA_MODEL", "llama3.1:8b").strip()
         self.timeout_seconds = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
         self.keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", "10m").strip()
         self.num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
         self.num_predict = int(os.getenv("OLLAMA_NUM_PREDICT", "192"))
+        self.translation_num_predict = int(os.getenv("OLLAMA_TRANSLATION_NUM_PREDICT", "256"))
         self.temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
         self.top_p = float(os.getenv("OLLAMA_TOP_P", "0.9"))
         self.max_context_chars = int(os.getenv("OLLAMA_MAX_CONTEXT_CHARS", "12000"))
@@ -116,6 +123,93 @@ class OllamaService:
             logger.warning("Ollama health check failed: %s", exc)
         return self.status()
 
+    async def translate_text(
+        self,
+        text: str,
+        target_language: str,
+        source_language: str | None = None,
+    ) -> dict[str, str]:
+        if not self.enabled:
+            raise OllamaServiceError("AI model inference is disabled")
+        if not text.strip():
+            raise OllamaServiceError("Text to translate must not be empty")
+        if not target_language.strip():
+            raise OllamaServiceError("Target language must not be empty")
+        if not self._loaded:
+            await self.check_health()
+        if not self._loaded:
+            raise OllamaServiceError(self._load_error or "Ollama model is unavailable")
+
+        source_instruction = (
+            f"The source language is {source_language.strip()}."
+            if source_language and source_language.strip()
+            else "Detect the source language from the text."
+        )
+        target_language = target_language.strip()
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"{source_instruction}\n"
+                        f"Target language: {target_language}\n"
+                        f"Text:\n{text.strip()}"
+                    ),
+                },
+            ],
+            "stream": False,
+            "keep_alive": self.keep_alive,
+            "options": {
+                "num_ctx": min(self.num_ctx, 2048),
+                "num_predict": self.translation_num_predict,
+                "temperature": 0,
+                "top_p": self.top_p,
+            },
+        }
+        logger.info(
+            "Ollama translation started model=%s target_language=%s source_language=%s input_chars=%s stream=False",
+            self.model_name,
+            target_language,
+            source_language or "auto",
+            len(text),
+        )
+        started_at = time.perf_counter()
+
+        try:
+            async with self._client() as client:
+                response = await client.post("/api/chat", json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPStatusError as exc:
+            self._load_error = f"Ollama returned HTTP {exc.response.status_code}"
+            logger.error(self._load_error)
+            raise OllamaServiceError(self._load_error) from exc
+        except (httpx.RequestError, ValueError) as exc:
+            self._loaded = False
+            self._load_error = f"Unable to call Ollama: {exc}"
+            logger.error(self._load_error)
+            raise OllamaServiceError(self._load_error) from exc
+
+        content = data.get("message", {}).get("content", "")
+        result = _parse_translation_response(
+            content,
+            fallback_source=source_language,
+            target_language=target_language,
+        )
+        if not result["translatedText"]:
+            raise OllamaServiceError("Ollama returned an empty translation")
+        self._loaded = True
+        self._load_error = None
+        logger.info(
+            "Ollama translation completed elapsed_ms=%.1f source_language=%s output_chars=%s",
+            (time.perf_counter() - started_at) * 1000,
+            result["sourceLanguage"],
+            len(result["translatedText"]),
+        )
+        return result
+
     async def generate_reply(
         self,
         messages: list[tuple[str, str]],
@@ -129,6 +223,7 @@ class OllamaService:
         checklist=None,
         attachments=None,
         rag_context=None,
+        response_word_limit: int | None = 250,
     ) -> str:
         parts = [
             chunk
@@ -144,6 +239,7 @@ class OllamaService:
                 checklist=checklist,
                 attachments=attachments,
                 rag_context=rag_context,
+                response_word_limit=response_word_limit,
             )
         ]
         reply = "".join(parts).strip()
@@ -165,6 +261,7 @@ class OllamaService:
         checklist=None,
         attachments=None,
         rag_context=None,
+        response_word_limit: int | None = 250,
     ) -> AsyncIterator[str]:
         if not self.enabled:
             raise OllamaServiceError("AI model inference is disabled")
@@ -189,6 +286,7 @@ class OllamaService:
             checklist=checklist or [],
             rag_context=rag_context,
             max_context_chars=self.max_context_chars,
+            response_word_limit=response_word_limit,
         )
         payload = {
             "model": self.model_name,
@@ -252,8 +350,17 @@ def _build_ollama_messages(
     checklist=None,
     rag_context=None,
     max_context_chars=12000,
+    response_word_limit: int | None = 250,
 ) -> list[dict[str, str]]:
-    context_parts = [SYSTEM_PROMPT, "Keep the answer concise. Do not repeat the question. Use short paragraphs or bullet points."]
+    context_parts = [SYSTEM_PROMPT]
+    if response_word_limit and response_word_limit > 0:
+        context_parts.append(
+            f"Answer questions in {response_word_limit} words or fewer, with enough detail to be useful. "
+            "This word limit does not apply to translation or visit report generation."
+        )
+    context_parts.append(
+        "Keep the answer concise. Do not repeat the question. Use short paragraphs or bullet points."
+    )
     patient_context = _build_patient_context(patient)
     if patient_context:
         context_parts.append(patient_context)
@@ -283,6 +390,38 @@ def _build_ollama_messages(
     if len(system_content) > system_budget:
         system_content = system_content[:system_budget].rstrip() + "\n\n[Context truncated]"
     return [{"role": "system", "content": system_content}, *conversation]
+
+
+def _parse_translation_response(
+    content: str,
+    *,
+    fallback_source: str | None,
+    target_language: str,
+) -> dict[str, str]:
+    try:
+        payload = json.loads(_extract_json_object(content))
+    except (TypeError, ValueError):
+        payload = {}
+
+    translated_text = str(payload.get("translatedText") or content).strip()
+    return {
+        "sourceLanguage": str(
+            payload.get("sourceLanguage") or fallback_source or "Auto-detected"
+        ).strip(),
+        "targetLanguage": str(payload.get("targetLanguage") or target_language).strip(),
+        "translatedText": translated_text,
+    }
+
+
+def _extract_json_object(content: str) -> str:
+    stripped = content.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start >= 0 and end > start:
+        return stripped[start : end + 1]
+    raise ValueError("No JSON object found in Ollama translation response")
 
 
 def _build_patient_context(patient) -> str:

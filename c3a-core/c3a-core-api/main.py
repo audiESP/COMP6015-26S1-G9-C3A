@@ -41,6 +41,8 @@ from app.schemas import (
     StartVisitRequest,
     TaskIssueRequest,
     TaskStatusRequest,
+    TranslationRequest,
+    TranslationResponse,
     UpdatePatientProfileRequest,
     UploadRequest,
     UploadResponse,
@@ -288,6 +290,7 @@ async def generate_visit_report(visit_id: str, req: GenerateVisitReportRequest, 
                 taskContext=req.taskContext,
                 eventContext=req.eventContext,
                 riskContext=req.riskContext,
+                responseWordLimit=0,
             ),
             request_id=getattr(request.state, "request_id", None),
         )
@@ -353,6 +356,35 @@ async def chat_stream(req: ChatRequest, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/translate", response_model=TranslationResponse)
+async def translate(req: TranslationRequest, request: Request):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text to translate must not be empty")
+    if not req.targetLanguage.strip():
+        raise HTTPException(status_code=400, detail="Target language must not be empty")
+
+    started_at = time.perf_counter()
+    logger.info(
+        "API POST /translate received target_language=%s text_preview=%r",
+        req.targetLanguage,
+        _preview(req.text),
+    )
+    try:
+        ai_response = await ai_client.translate(
+            req,
+            request_id=getattr(request.state, "request_id", None),
+        )
+        logger.info(
+            "API POST /translate completed elapsed_ms=%.1f source_language=%s translated_chars=%s",
+            (time.perf_counter() - started_at) * 1000,
+            ai_response.sourceLanguage,
+            len(ai_response.translatedText),
+        )
+        return TranslationResponse.model_validate(ai_response.model_dump())
+    except AiServiceUnavailable as exc:
+        raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 
 
 @app.post("/upload", response_model=UploadResponse)

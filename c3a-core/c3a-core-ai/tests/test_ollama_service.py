@@ -31,7 +31,12 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
             if request.url.path == "/api/tags":
                 return httpx.Response(
                     200,
-                    json={"models": [{"name": "llama3:latest", "capabilities": ["completion"]}]},
+                    json={
+                        "models": [
+                            {"name": service.model_name, "capabilities": ["completion"]},
+                            {"name": "llama3:latest", "capabilities": ["completion"]},
+                        ]
+                    },
                 )
             return httpx.Response(
                 200,
@@ -48,8 +53,45 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply, "Safe response.")
         self.assertEqual([request.url.path for request in requests], ["/api/tags", "/api/chat"])
         payload = json.loads(requests[-1].content)
-        self.assertEqual(payload["model"], "llama3:latest")
+        self.assertEqual(payload["model"], service.model_name)
         self.assertTrue(payload["stream"])
+
+    async def test_translate_text_detects_language_and_posts_non_streaming_payload(self):
+        requests = []
+        service = None
+
+        def handler(request):
+            requests.append(request)
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "sourceLanguage": "English",
+                                "targetLanguage": "Spanish",
+                                "translatedText": "Buenos dias.",
+                            }
+                        )
+                    }
+                },
+            )
+
+        service = OllamaService(transport=httpx.MockTransport(handler))
+        result = await service.translate_text("Good morning.", "Spanish")
+
+        self.assertEqual(result["sourceLanguage"], "English")
+        self.assertEqual(result["targetLanguage"], "Spanish")
+        self.assertEqual(result["translatedText"], "Buenos dias.")
+        self.assertEqual([request.url.path for request in requests], ["/api/tags", "/api/chat"])
+        payload = json.loads(requests[-1].content)
+        self.assertFalse(payload["stream"])
+        self.assertIn("Detect the source language", payload["messages"][1]["content"])
 
     async def test_ollama_errors_are_explicit(self):
         def handler(request):
@@ -113,6 +155,16 @@ class OllamaMessageTest(unittest.TestCase):
             self.assertIn(heading, system_content)
         self.assertIn("only actions within the supplied worker's role", system_content)
         self.assertIn("Do not diagnose", system_content)
+        self.assertIn("250 words or fewer", system_content)
+
+    def test_response_word_limit_can_be_disabled_for_reports(self):
+        messages = _build_ollama_messages(
+            [("user", "Generate the visit report.")],
+            response_word_limit=0,
+        )
+
+        self.assertNotIn("250 words or fewer", messages[0]["content"])
+        self.assertIn("Keep the answer concise", messages[0]["content"])
 
 
 if __name__ == "__main__":

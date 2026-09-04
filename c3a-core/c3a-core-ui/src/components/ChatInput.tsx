@@ -81,7 +81,6 @@ export const ChatInput: React.FC<Props> = ({
           placeholder={t('chat.placeholder')}
           placeholderTextColor="#A8C0C0"
           multiline
-          maxLength={2000}
           onSubmitEditing={handleSend}
           returnKeyType="send"
           blurOnSubmit={false}

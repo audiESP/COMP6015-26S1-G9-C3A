@@ -21,7 +21,7 @@ import { HistorySidebar } from '../components/HistorySidebar';
 import { PatientModal } from '../components/PatientModal';
 import { useChat } from '../hooks/useChat';
 import '../i18n';
-import { generateVisitReport, setApiBaseUrl } from '../services/api';
+import { generateVisitReport, setApiBaseUrl, translateText } from '../services/api';
 import { useChatStore } from '../store/chatStore';
 import { useScenarioStore } from '../store/scenarioStore';
 import {
@@ -35,6 +35,7 @@ import {
   Message,
   PatientInfo,
   RiskAlert,
+  TranslationResponse,
   VisitContext,
   VisitLifecycleStep,
   VisitQueueItem,
@@ -45,12 +46,13 @@ interface Props {
   apiBaseUrl?: string;
 }
 
-type VisitSection = 'tasks' | 'patient' | 'assistant' | 'summary';
+type VisitSection = 'tasks' | 'patient' | 'translation' | 'assistant' | 'summary';
 type TaskIssueType = 'cannot_complete' | 'patient_declined' | 'safety_concern';
 
 const sections: { id: VisitSection; label: string }[] = [
   { id: 'tasks', label: 'Tasks' },
   { id: 'patient', label: 'Patient' },
+  { id: 'translation', label: 'Translate' },
   { id: 'assistant', label: 'Assistant' },
   { id: 'summary', label: 'Summary' },
 ];
@@ -516,13 +518,19 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             />
           )}
 
+          {activeSection === 'translation' && (
+            <TranslationTab
+              patientLanguage={scenario.patient.preferredLanguage ?? 'the patient preferred language'}
+              workerLanguage="English"
+            />
+          )}
+
           {activeSection === 'assistant' && (
             <AssistantTab
               error={chatError}
               messages={messages}
               isLoading={chatLoading}
               contextLabel={`${scenario.patient.name} · ${stepLabels[scenario.lifecycleStep]} · ${currentTask.label}`}
-              patientLanguage={scenario.patient.preferredLanguage ?? 'the patient preferred language'}
               onSuggestedQuestion={handleSend}
               onOpenHistory={() => setHistoryOpen(true)}
               onEditPatient={() => setPatientModalOpen(true)}
@@ -1178,7 +1186,6 @@ function AssistantTab({
   messages,
   isLoading,
   contextLabel,
-  patientLanguage,
   onSuggestedQuestion,
   onOpenHistory,
   onEditPatient,
@@ -1187,28 +1194,10 @@ function AssistantTab({
   messages: Message[];
   isLoading: boolean;
   contextLabel: string;
-  patientLanguage: string;
   onSuggestedQuestion: (text: string, attachments: Attachment[]) => void;
   onOpenHistory: () => void;
   onEditPatient: () => void;
 }) {
-  const [translationText, setTranslationText] = useState('');
-  const commonPhrases = [
-    'I am here for your scheduled care visit.',
-    'Do you have any pain or discomfort today?',
-    'I am going to help with your medication now.',
-  ];
-
-  const requestTranslation = (sourceText: string) => {
-    const cleanText = sourceText.trim();
-    if (!cleanText) return;
-    onSuggestedQuestion(
-      `Translate this care-worker message into ${patientLanguage}. Keep it clear, respectful, and easy for an older patient to understand: "${cleanText}"`,
-      [],
-    );
-    setTranslationText('');
-  };
-
   return (
     <View style={styles.tabPanel}>
       <View style={styles.assistantToolbar}>
@@ -1241,41 +1230,6 @@ function AssistantTab({
         </View>
       </View>
 
-      <View style={styles.translatePanel}>
-        <View style={styles.sectionHeaderCompact}>
-          <Text style={styles.sectionTitle}>Translate</Text>
-          <Text style={styles.sectionDetail}>{patientLanguage}</Text>
-        </View>
-        <TextInput
-          style={[styles.textInput, styles.translateInput]}
-          value={translationText}
-          onChangeText={setTranslationText}
-          placeholder="Type what you want to say to the patient"
-          placeholderTextColor="#8A9B93"
-          multiline
-        />
-        <View style={styles.quickActionBar}>
-          <ActionButton
-            label="Translate"
-            onPress={() => requestTranslation(translationText)}
-            disabled={!translationText.trim() || isLoading}
-          />
-        </View>
-        <View style={styles.phraseGrid}>
-          {commonPhrases.map((phrase) => (
-            <TouchableOpacity
-              key={phrase}
-              style={styles.phraseButton}
-              onPress={() => requestTranslation(phrase)}
-              disabled={isLoading}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.phraseText}>{phrase}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
       <View style={styles.chatPanel}>
         {error && (
           <View style={styles.errorBanner}>
@@ -1301,6 +1255,196 @@ function AssistantTab({
             isTyping
           />
         )}
+      </View>
+    </View>
+  );
+}
+
+type TranslationDirection = 'hcw_to_patient' | 'patient_to_hcw';
+
+function TranslationTab({
+  patientLanguage,
+  workerLanguage,
+}: {
+  patientLanguage: string;
+  workerLanguage: string;
+}) {
+  const [direction, setDirection] = useState<TranslationDirection>('hcw_to_patient');
+  const [inputText, setInputText] = useState('');
+  const [result, setResult] = useState<TranslationResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const requestSeq = useRef(0);
+  const lastRequestedKey = useRef('');
+
+  const targetLanguage = direction === 'hcw_to_patient' ? patientLanguage : workerLanguage;
+  const sourceLabel = direction === 'hcw_to_patient' ? workerLanguage : patientLanguage;
+  const commonPhrases = [
+    'I am here for your scheduled care visit.',
+    'Do you have any pain or discomfort today?',
+    'I am going to help with your medication now.',
+    'Please tell me if you feel dizzy or unwell.',
+  ];
+
+  const requestTranslation = useCallback(
+    async (sourceText = inputText) => {
+      const cleanText = sourceText.trim();
+      if (!cleanText) {
+        setResult(null);
+        setError(null);
+        return;
+      }
+
+      const requestKey = `${targetLanguage}|${cleanText}`;
+      if (lastRequestedKey.current === requestKey) return;
+      lastRequestedKey.current = requestKey;
+
+      const seq = requestSeq.current + 1;
+      requestSeq.current = seq;
+      setIsTranslating(true);
+      setError(null);
+
+      try {
+        const response = await translateText({
+          text: cleanText,
+          targetLanguage,
+        });
+        if (requestSeq.current === seq) {
+          setResult(response);
+        }
+      } catch (err) {
+        if (requestSeq.current === seq) {
+          setError(err instanceof Error ? err.message : 'Translation failed.');
+        }
+      } finally {
+        if (requestSeq.current === seq) {
+          setIsTranslating(false);
+        }
+      }
+    },
+    [inputText, targetLanguage],
+  );
+
+  useEffect(() => {
+    requestSeq.current += 1;
+    lastRequestedKey.current = '';
+    setResult(null);
+    setError(null);
+    if (!inputText.trim()) {
+      setIsTranslating(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      requestTranslation(inputText);
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [direction, inputText, requestTranslation]);
+
+  const handlePhrase = (phrase: string) => {
+    setDirection('hcw_to_patient');
+    setInputText(phrase);
+  };
+
+  const handleClear = () => {
+    requestSeq.current += 1;
+    lastRequestedKey.current = '';
+    setInputText('');
+    setResult(null);
+    setError(null);
+    setIsTranslating(false);
+  };
+
+  return (
+    <View style={styles.tabPanel}>
+      <View style={styles.translatePanel}>
+        <View style={styles.sectionHeaderCompact}>
+          <Text style={styles.sectionTitle}>Real-time translation</Text>
+          <Text style={styles.sectionDetail}>{sourceLabel} to {targetLanguage}</Text>
+        </View>
+
+        <View style={styles.directionRow}>
+          <TouchableOpacity
+            style={[styles.directionButton, direction === 'hcw_to_patient' && styles.directionButtonActive]}
+            onPress={() => setDirection('hcw_to_patient')}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.directionText, direction === 'hcw_to_patient' && styles.directionTextActive]}>
+              HCW to Patient
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.directionButton, direction === 'patient_to_hcw' && styles.directionButtonActive]}
+            onPress={() => setDirection('patient_to_hcw')}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.directionText, direction === 'patient_to_hcw' && styles.directionTextActive]}>
+              Patient to HCW
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <TextInput
+          style={[styles.textInput, styles.translateInput]}
+          value={inputText}
+          onChangeText={setInputText}
+          placeholder="Type or paste transcribed speech"
+          placeholderTextColor="#8A9B93"
+          multiline
+        />
+
+        <View style={styles.quickActionBar}>
+          <ActionButton
+            label={isTranslating ? 'Translating...' : 'Translate'}
+            onPress={() => {
+              lastRequestedKey.current = '';
+              requestTranslation(inputText);
+            }}
+            disabled={!inputText.trim() || isTranslating}
+          />
+          <ActionButton
+            label="Clear"
+            tone="muted"
+            onPress={handleClear}
+            disabled={!inputText.trim() && !result && !error}
+          />
+        </View>
+
+        {(result || isTranslating) && (
+          <View style={styles.translationResult}>
+            <Text style={styles.translationMeta}>
+              Source: {result?.sourceLanguage ?? 'Detecting'} | Target: {targetLanguage}
+            </Text>
+            <Text style={styles.translationText} selectable>
+              {result?.translatedText ?? '...'}
+            </Text>
+          </View>
+        )}
+
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.translatePanel}>
+        <View style={styles.sectionHeaderCompact}>
+          <Text style={styles.sectionTitle}>Common phrases</Text>
+          <Text style={styles.sectionDetail}>{patientLanguage}</Text>
+        </View>
+        <View style={styles.phraseGrid}>
+          {commonPhrases.map((phrase) => (
+            <TouchableOpacity
+              key={phrase}
+              style={styles.phraseButton}
+              onPress={() => handlePhrase(phrase)}
+              disabled={isTranslating}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.phraseText}>{phrase}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
     </View>
   );
@@ -2103,6 +2247,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   translateInput: { minHeight: 74, textAlignVertical: 'top' },
+  directionRow: { flexDirection: 'row', backgroundColor: '#E8EFEA', borderRadius: 8, padding: 3, gap: 3 },
+  directionButton: { flex: 1, minHeight: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 6, paddingHorizontal: 8 },
+  directionButtonActive: { backgroundColor: '#2E6F73' },
+  directionText: { color: '#60746B', fontSize: 12, fontWeight: '900', textAlign: 'center' },
+  directionTextActive: { color: '#FFFFFF' },
+  translationResult: {
+    backgroundColor: '#F4F7F6',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    padding: 12,
+    gap: 6,
+  },
+  translationMeta: { color: '#60746B', fontSize: 11, fontWeight: '900', textTransform: 'uppercase' },
+  translationText: { color: '#16231E', fontSize: 18, fontWeight: '800', lineHeight: 25 },
   phraseGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   phraseButton: {
     flexGrow: 1,

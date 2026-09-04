@@ -190,6 +190,7 @@ class AiChatRequest(BaseModel):
     riskContext: Optional[list[RiskContext]] = None
     checklistContext: Optional[list[IncidentChecklistItem]] = None
     attachments: Optional[list[AttachmentData]] = None
+    responseWordLimit: Optional[int] = 250
 
 
 class AiChatResponse(BaseModel):
@@ -197,6 +198,18 @@ class AiChatResponse(BaseModel):
     sources: list[str] = []
     rag: dict[str, Any] = {}
     model: dict[str, Any] = {}
+
+
+class TranslationRequest(BaseModel):
+    text: str
+    sourceLanguage: Optional[str] = None
+    targetLanguage: str
+
+
+class TranslationResponse(BaseModel):
+    sourceLanguage: str
+    targetLanguage: str
+    translatedText: str
 
 
 @dataclass(frozen=True)
@@ -476,6 +489,37 @@ async def chat_stream(req: AiChatRequest):
     )
 
 
+@app.post("/ai/translate", response_model=TranslationResponse)
+async def translate(req: TranslationRequest):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text to translate must not be empty")
+    if not req.targetLanguage.strip():
+        raise HTTPException(status_code=400, detail="Target language must not be empty")
+
+    started_at = time.perf_counter()
+    logger.info(
+        "AI POST /ai/translate received target_language=%s source_language=%s text_preview=%r",
+        req.targetLanguage,
+        req.sourceLanguage or "auto",
+        _preview(req.text),
+    )
+    try:
+        result = await service.translate_text(
+            text=req.text,
+            target_language=req.targetLanguage,
+            source_language=req.sourceLanguage,
+        )
+    except OllamaServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info(
+        "AI POST /ai/translate completed elapsed_ms=%.1f source_language=%s translated_chars=%s",
+        (time.perf_counter() - started_at) * 1000,
+        result["sourceLanguage"],
+        len(result["translatedText"]),
+    )
+    return TranslationResponse(**result)
+
+
 async def _prepare_chat(req: AiChatRequest) -> PreparedChat:
     latest_user_query = _latest_user_query(req.messages)
     if req.attachments:
@@ -554,6 +598,7 @@ def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, 
         "checklist": req.checklistContext or [],
         "attachments": req.attachments or [],
         "rag_context": prepared.combined_context,
+        "response_word_limit": req.responseWordLimit if req.responseWordLimit and req.responseWordLimit > 0 else None,
     }
 
 

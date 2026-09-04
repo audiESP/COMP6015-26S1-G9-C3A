@@ -227,6 +227,7 @@ export interface ApiChatRequest {
   riskContext?: RiskAlert[];
   checklistContext?: IncidentChecklistItem[];
   attachments?: { type: string; base64: string; mimeType: string }[];
+  responseWordLimit?: number;
 }
 
 export interface ApiChatResponse {
@@ -273,4 +274,16 @@ export interface VisitReportRequest {
 
 export interface VisitReportResponse {
   report: string;
+}
+
+export interface TranslationRequest {
+  text: string;
+  sourceLanguage?: string;
+  targetLanguage: string;
+}
+
+export interface TranslationResponse {
+  sourceLanguage: string;
+  targetLanguage: string;
+  translatedText: string;
 }
