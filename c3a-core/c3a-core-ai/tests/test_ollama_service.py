@@ -55,6 +55,33 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(requests[-1].content)
         self.assertEqual(payload["model"], service.model_name)
         self.assertTrue(payload["stream"])
+        self.assertEqual(payload["options"]["num_predict"], service.num_predict)
+
+    async def test_generate_reply_uses_report_token_budget_when_word_limit_disabled(self):
+        requests = []
+        service = None
+
+        def handler(request):
+            requests.append(request)
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
+                )
+            return httpx.Response(
+                200,
+                content=b'{"message":{"content":"Full report."}}\n',
+            )
+
+        service = OllamaService(transport=httpx.MockTransport(handler))
+        reply = await service.generate_reply(
+            [("user", "Generate a visit report.")],
+            response_word_limit=None,
+        )
+
+        self.assertEqual(reply, "Full report.")
+        payload = json.loads(requests[-1].content)
+        self.assertEqual(payload["options"]["num_predict"], service.report_num_predict)
 
     async def test_translate_text_detects_language_and_posts_non_streaming_payload(self):
         requests = []

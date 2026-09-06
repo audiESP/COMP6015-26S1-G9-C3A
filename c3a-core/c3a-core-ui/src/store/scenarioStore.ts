@@ -29,7 +29,7 @@ import {
 } from '../services/api';
 
 const DEFAULT_WORKER_ID = 'cw-001';
-const DEFAULT_SHIFT_DATE = '2026-05-12';
+const DEFAULT_SHIFT_DATE = '2026-09-04';
 const OFFLINE_WORKFLOW_MESSAGE =
   'Backend is unreachable, so this visit update was saved locally for the demo session.';
 

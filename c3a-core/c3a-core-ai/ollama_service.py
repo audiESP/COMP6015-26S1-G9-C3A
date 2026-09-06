@@ -65,6 +65,7 @@ class OllamaService:
         self.keep_alive = os.getenv("OLLAMA_KEEP_ALIVE", "10m").strip()
         self.num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
         self.num_predict = int(os.getenv("OLLAMA_NUM_PREDICT", "192"))
+        self.report_num_predict = int(os.getenv("OLLAMA_REPORT_NUM_PREDICT", "1024"))
         self.translation_num_predict = int(os.getenv("OLLAMA_TRANSLATION_NUM_PREDICT", "256"))
         self.temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
         self.top_p = float(os.getenv("OLLAMA_TOP_P", "0.9"))
@@ -288,6 +289,7 @@ class OllamaService:
             max_context_chars=self.max_context_chars,
             response_word_limit=response_word_limit,
         )
+        num_predict = self.report_num_predict if response_word_limit is None else self.num_predict
         payload = {
             "model": self.model_name,
             "messages": ollama_messages,
@@ -295,7 +297,7 @@ class OllamaService:
             "keep_alive": self.keep_alive,
             "options": {
                 "num_ctx": self.num_ctx,
-                "num_predict": self.num_predict,
+                "num_predict": num_predict,
                 "temperature": self.temperature,
                 "top_p": self.top_p,
             },
@@ -307,7 +309,7 @@ class OllamaService:
             len(ollama_messages) - 1,
             patient is not None,
             self.num_ctx,
-            self.num_predict,
+            num_predict,
         )
         generation_started_at = time.perf_counter()
 

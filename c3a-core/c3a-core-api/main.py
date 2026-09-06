@@ -135,6 +135,7 @@ def _visit_report_prompt(req: GenerateVisitReportRequest) -> str:
         "Use only the supplied form answers, vitals, observations, visit context, "
         "tasks, events, and risk alerts. Do not invent clinical facts. "
         "Write concise professional English for HCW review. "
+        "Complete every section below; do not stop before Overall Outcome. "
         "Use this structure exactly:\n"
         "1. Visit Summary\n"
         "2. Patient Condition\n"

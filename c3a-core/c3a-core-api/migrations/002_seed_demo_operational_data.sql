@@ -93,7 +93,7 @@ set display_name = excluded.display_name,
     updated_at = now();
 
 insert into c3a_app_shifts (worker_id, shift_date, label, status, updated_at)
-values ('cw-001', date '2026-05-12', 'Morning home-care run', 'scheduled', now())
+values ('cw-001', date '2026-09-04', 'Morning home-care run', 'scheduled', now())
 on conflict (worker_id, shift_date, label) do update
 set status = excluded.status,
     updated_at = now();
@@ -102,7 +102,7 @@ with shift_row as (
     select id
     from c3a_app_shifts
     where worker_id = 'cw-001'
-      and shift_date = date '2026-05-12'
+      and shift_date = date '2026-09-04'
       and label = 'Morning home-care run'
 )
 insert into c3a_app_visits (
@@ -130,7 +130,7 @@ from (
         (select id from shift_row),
         '70b32985-ca41-2bd6-7b1a-7b2e031a9f37'::uuid,
         'cw-001',
-        '2026-05-12T12:00:00+08:00'::timestamptz,
+        '2026-09-04T12:00:00+08:00'::timestamptz,
         1,
         'Home visit - lunch and medication support',
         'Home visit - lunch and medication support',
@@ -147,7 +147,7 @@ from (
         (select id from shift_row),
         '96779f23-e1c7-9b86-f7b5-bfae61b7eaec'::uuid,
         'cw-001',
-        '2026-05-12T13:30:00+08:00'::timestamptz,
+        '2026-09-04T13:30:00+08:00'::timestamptz,
         2,
         'Home visit - wellbeing and transfer support',
         'Home visit - wellbeing and transfer support',
@@ -164,7 +164,7 @@ from (
         (select id from shift_row),
         '8b9f8dea-94be-df0d-4eff-b79f01091f3d'::uuid,
         'cw-001',
-        '2026-05-12T15:00:00+08:00'::timestamptz,
+        '2026-09-04T15:00:00+08:00'::timestamptz,
         3,
         'Home visit - mobility and personal-care support',
         'Home visit - mobility and personal-care support',
@@ -233,22 +233,22 @@ with task_seed as (
     select *
     from (
         values
-        ('visit-home-1200', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T12:00:00+08:00'::timestamptz, 'Confirm address, introduce visit purpose, check preferred communication.', 1, 'pending'),
-        ('visit-home-1200', 'meal', 'Support lunch routine', 'meal', '2026-05-12T12:10:00+08:00'::timestamptz, 'Offer rice-based meal option and check appetite.', 2, 'pending'),
-        ('visit-home-1200', 'medication', 'Record medication support', 'medication', '2026-05-12T12:20:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
-        ('visit-home-1200', 'wellbeing', 'Wellbeing and comfort check', 'wellbeing', '2026-05-12T12:30:00+08:00'::timestamptz, 'Ask about pain, dizziness, hydration, and unusual symptoms.', 4, 'pending'),
-        ('visit-home-1200', 'mobility', 'Observe mobility and falls risk', 'mobility', '2026-05-12T12:35:00+08:00'::timestamptz, 'Check walker use and whether gait is steady today.', 5, 'pending'),
-        ('visit-home-1200', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T12:45:00+08:00'::timestamptz, 'Record completed tasks, issues, escalation, and follow-up needs.', 6, 'pending'),
-        ('visit-home-1330', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T13:30:00+08:00'::timestamptz, 'Confirm interpreter preference and orient the patient to the visit.', 1, 'pending'),
-        ('visit-home-1330', 'wellbeing', 'Wellbeing and nutrition check', 'wellbeing', '2026-05-12T13:40:00+08:00'::timestamptz, 'Check comfort, hydration, appetite, and orientation.', 2, 'pending'),
-        ('visit-home-1330', 'medication', 'Record medication support', 'medication', '2026-05-12T13:45:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
-        ('visit-home-1330', 'mobility', 'Transfer assistance observation', 'mobility', '2026-05-12T13:55:00+08:00'::timestamptz, 'Observe transfer support needs and document changes.', 4, 'pending'),
-        ('visit-home-1330', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T14:05:00+08:00'::timestamptz, 'Record nutrition, transfer support, and family communication needs.', 5, 'pending'),
-        ('visit-home-1500', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-05-12T15:00:00+08:00'::timestamptz, 'Check communication preferences before personal-care support.', 1, 'pending'),
-        ('visit-home-1500', 'wellbeing', 'Orientation and comfort check', 'wellbeing', '2026-05-12T15:10:00+08:00'::timestamptz, 'Confirm comfort, pain, and any confusion today.', 2, 'pending'),
-        ('visit-home-1500', 'medication', 'Record medication support', 'medication', '2026-05-12T15:15:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
-        ('visit-home-1500', 'mobility', 'Mobility and personal-care support', 'mobility', '2026-05-12T15:25:00+08:00'::timestamptz, 'Observe steadiness and respect same-gender care preference where possible.', 4, 'pending'),
-        ('visit-home-1500', 'documentation', 'Complete visit summary', 'documentation', '2026-05-12T15:40:00+08:00'::timestamptz, 'Record mobility, preferences, and any escalation.', 5, 'pending')
+        ('visit-home-1200', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-09-04T12:00:00+08:00'::timestamptz, 'Confirm address, introduce visit purpose, check preferred communication.', 1, 'pending'),
+        ('visit-home-1200', 'meal', 'Support lunch routine', 'meal', '2026-09-04T12:10:00+08:00'::timestamptz, 'Offer rice-based meal option and check appetite.', 2, 'pending'),
+        ('visit-home-1200', 'medication', 'Record medication support', 'medication', '2026-09-04T12:20:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
+        ('visit-home-1200', 'wellbeing', 'Wellbeing and comfort check', 'wellbeing', '2026-09-04T12:30:00+08:00'::timestamptz, 'Ask about pain, dizziness, hydration, and unusual symptoms.', 4, 'pending'),
+        ('visit-home-1200', 'mobility', 'Observe mobility and falls risk', 'mobility', '2026-09-04T12:35:00+08:00'::timestamptz, 'Check walker use and whether gait is steady today.', 5, 'pending'),
+        ('visit-home-1200', 'documentation', 'Complete visit summary', 'documentation', '2026-09-04T12:45:00+08:00'::timestamptz, 'Record completed tasks, issues, escalation, and follow-up needs.', 6, 'pending'),
+        ('visit-home-1330', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-09-04T13:30:00+08:00'::timestamptz, 'Confirm interpreter preference and orient the patient to the visit.', 1, 'pending'),
+        ('visit-home-1330', 'wellbeing', 'Wellbeing and nutrition check', 'wellbeing', '2026-09-04T13:40:00+08:00'::timestamptz, 'Check comfort, hydration, appetite, and orientation.', 2, 'pending'),
+        ('visit-home-1330', 'medication', 'Record medication support', 'medication', '2026-09-04T13:45:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
+        ('visit-home-1330', 'mobility', 'Transfer assistance observation', 'mobility', '2026-09-04T13:55:00+08:00'::timestamptz, 'Observe transfer support needs and document changes.', 4, 'pending'),
+        ('visit-home-1330', 'documentation', 'Complete visit summary', 'documentation', '2026-09-04T14:05:00+08:00'::timestamptz, 'Record nutrition, transfer support, and family communication needs.', 5, 'pending'),
+        ('visit-home-1500', 'arrival', 'Arrive and confirm identity', 'arrival', '2026-09-04T15:00:00+08:00'::timestamptz, 'Check communication preferences before personal-care support.', 1, 'pending'),
+        ('visit-home-1500', 'wellbeing', 'Orientation and comfort check', 'wellbeing', '2026-09-04T15:10:00+08:00'::timestamptz, 'Confirm comfort, pain, and any confusion today.', 2, 'pending'),
+        ('visit-home-1500', 'medication', 'Record medication support', 'medication', '2026-09-04T15:15:00+08:00'::timestamptz, 'Review current medicines and record whether support was completed, delayed, declined, unavailable, or unable to confirm.', 3, 'pending'),
+        ('visit-home-1500', 'mobility', 'Mobility and personal-care support', 'mobility', '2026-09-04T15:25:00+08:00'::timestamptz, 'Observe steadiness and respect same-gender care preference where possible.', 4, 'pending'),
+        ('visit-home-1500', 'documentation', 'Complete visit summary', 'documentation', '2026-09-04T15:40:00+08:00'::timestamptz, 'Record mobility, preferences, and any escalation.', 5, 'pending')
     ) as seed(external_key, task_key, label, type, due_at, detail, sort_order, status)
 )
 insert into c3a_app_care_tasks (
