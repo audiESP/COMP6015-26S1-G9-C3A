@@ -26,6 +26,11 @@ from fastapi.responses import StreamingResponse
 from app.ai_client import AiClient, AiServiceUnavailable
 from app.db import DatabaseHealthChecker, close_database_pool, open_database_pool
 from app.logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
+from app.repositories.training_repository import (
+    TrainingRepository,
+    TrainingRepositoryUnavailable,
+    TrainingTopicNotFoundError,
+)
 from app.repositories.visit_repository import (
     VisitAccessError,
     VisitNotFoundError,
@@ -49,6 +54,9 @@ from app.schemas import (
     StartVisitRequest,
     TaskIssueRequest,
     TaskStatusRequest,
+    TrainingMaterialsResponse,
+    TrainingSearchResponse,
+    TrainingTopicsResponse,
     TranslationRequest,
     TranslationResponse,
     UpdatePatientProfileRequest,
@@ -86,6 +94,7 @@ app = FastAPI(title="C3A Core API", version="1.0.0", lifespan=lifespan)
 ai_client = AiClient()
 database_health_checker = DatabaseHealthChecker()
 visit_repository = VisitRepository()
+training_repository = TrainingRepository()
 
 app.add_middleware(
     CORSMiddleware,
@@ -162,6 +171,18 @@ def _visit_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Visit workflow database operation failed")
 
 
+def _training_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, TrainingRepositoryUnavailable):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, TrainingTopicNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, psycopg.errors.InvalidTextRepresentation):
+        logger.warning("Training topic identifier rejected: %s", exc)
+        return HTTPException(status_code=400, detail="Invalid training topic identifier format")
+    logger.exception("Training repository operation failed")
+    return HTTPException(status_code=500, detail="Training material database operation failed")
+
+
 @app.get("/health")
 async def health():
     return {
@@ -170,6 +191,32 @@ async def health():
         "ai": await ai_client.health(),
         "database": await database_health_checker.health(),
     }
+
+
+@app.get("/training/topics", response_model=TrainingTopicsResponse)
+def list_training_topics():
+    try:
+        return TrainingTopicsResponse(topics=training_repository.list_topics())
+    except Exception as exc:
+        raise _training_error(exc) from exc
+
+
+@app.get("/training/topics/{topic_id}/materials", response_model=TrainingMaterialsResponse)
+def list_training_materials(topic_id: str):
+    try:
+        return TrainingMaterialsResponse.model_validate(
+            training_repository.list_materials(topic_id)
+        )
+    except Exception as exc:
+        raise _training_error(exc) from exc
+
+
+@app.get("/training/materials/search", response_model=TrainingSearchResponse)
+def search_training_materials(q: str = ""):
+    try:
+        return TrainingSearchResponse(results=training_repository.search_materials(q))
+    except Exception as exc:
+        raise _training_error(exc) from exc
 
 
 @app.get("/workers/{worker_id}/visits", response_model=VisitQueueResponse)

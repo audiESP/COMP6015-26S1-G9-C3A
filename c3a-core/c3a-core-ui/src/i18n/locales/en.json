@@ -36,5 +36,20 @@
     "network": "Network error. Please try again.",
     "upload": "Failed to upload file.",
     "generic": "Something went wrong."
+  },
+  "training": {
+    "kicker": "Training",
+    "title": "Training Materials",
+    "loading": "Loading training materials...",
+    "empty": "No training materials available yet.",
+    "searchPlaceholder": "Search training materials...",
+    "searching": "Searching...",
+    "searchEmpty": "No materials match your search.",
+    "materialCount_one": "{{count}} material",
+    "materialCount_other": "{{count}} materials",
+    "excerptLabel": "Key excerpt (quoted verbatim)",
+    "source": "Source",
+    "openPdf": "Open source PDF",
+    "openLink": "Open source link"
   }
 }

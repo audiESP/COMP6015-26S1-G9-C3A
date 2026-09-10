@@ -36,5 +36,19 @@
     "network": "网络错误，请重试。",
     "upload": "文件上传失败。",
     "generic": "出现错误，请重试。"
+  },
+  "training": {
+    "kicker": "培训",
+    "title": "培训材料",
+    "loading": "正在加载培训材料...",
+    "empty": "暂无培训材料。",
+    "searchPlaceholder": "搜索培训材料...",
+    "searching": "搜索中...",
+    "searchEmpty": "没有找到匹配的材料。",
+    "materialCount": "{{count}} 项材料",
+    "excerptLabel": "关键摘录（原文引用）",
+    "source": "来源",
+    "openPdf": "打开来源 PDF",
+    "openLink": "打开来源链接"
   }
 }

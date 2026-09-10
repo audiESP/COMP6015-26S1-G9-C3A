@@ -365,3 +365,42 @@ class RiskAnalysisResponse(BaseModel):
         "diagnosisMade": False,
         "medicationChangeSuggested": False,
     }
+
+
+class TrainingTopic(BaseModel):
+    id: str
+    slug: str
+    title: str
+    description: Optional[str] = None
+    materialCount: int = 0
+
+
+class TrainingMaterial(BaseModel):
+    id: str
+    topicId: str
+    title: str
+    type: Literal["article", "video", "pdf", "link"]
+    summary: Optional[str] = None
+    body: Optional[str] = None
+    url: Optional[str] = None
+    sourceName: Optional[str] = None
+    sourceUrl: Optional[str] = None
+    durationMinutes: Optional[int] = None
+
+
+class TrainingTopicsResponse(BaseModel):
+    topics: list[TrainingTopic]
+
+
+class TrainingMaterialsResponse(BaseModel):
+    topic: TrainingTopic
+    materials: list[TrainingMaterial]
+
+
+class TrainingSearchResult(TrainingMaterial):
+    topicTitle: str
+    topicSlug: str
+
+
+class TrainingSearchResponse(BaseModel):
+    results: list[TrainingSearchResult]

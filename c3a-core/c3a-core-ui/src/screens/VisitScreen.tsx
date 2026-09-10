@@ -48,6 +48,7 @@ import { formatDistance } from '../utils/location';
 
 interface Props {
   apiBaseUrl?: string;
+  onOpenTraining?: () => void;
 }
 
 type VisitSection = 'tasks' | 'patient' | 'translation' | 'assistant' | 'summary';
@@ -160,7 +161,7 @@ const stepLabels: Record<VisitLifecycleStep, string> = {
   closed: 'Finished',
 };
 
-export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
+export const VisitScreen: React.FC<Props> = ({ apiBaseUrl, onOpenTraining }) => {
   const scrollRef = useRef<ScrollView>(null);
   const [activeSection, setActiveSection] = useState<VisitSection>('tasks');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -486,6 +487,15 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
             <View style={[styles.statusPill, statusTone(scenario.visit.status)]}>
               <Text style={styles.statusText}>{statusLabels[scenario.visit.status]}</Text>
             </View>
+            {onOpenTraining && (
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={onOpenTraining}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.iconButtonText}>🎓</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {(workflowLoading || workflowSaving || workflowError) && (

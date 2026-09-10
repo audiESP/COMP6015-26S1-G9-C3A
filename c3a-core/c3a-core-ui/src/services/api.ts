@@ -10,6 +10,9 @@ import {
   MedicationSupportRecord,
   PatientInfo,
   ScenarioContext,
+  TrainingMaterial,
+  TrainingSearchResult,
+  TrainingTopic,
   TranslationRequest,
   TranslationResponse,
   VisitReportRequest,
@@ -427,6 +430,26 @@ export async function uploadFile(
   }
 
   return res.json();
+}
+
+export async function fetchTrainingTopics(): Promise<{ topics: TrainingTopic[] }> {
+  return requestJson('/training/topics', { method: 'GET' });
+}
+
+export async function fetchTrainingMaterials(
+  topicId: string,
+): Promise<{ topic: TrainingTopic; materials: TrainingMaterial[] }> {
+  return requestJson(`/training/topics/${encodeURIComponent(topicId)}/materials`, {
+    method: 'GET',
+  });
+}
+
+export async function searchTrainingMaterials(
+  query: string,
+): Promise<{ results: TrainingSearchResult[] }> {
+  return requestJson(`/training/materials/search?q=${encodeURIComponent(query)}`, {
+    method: 'GET',
+  });
 }
 
 /**

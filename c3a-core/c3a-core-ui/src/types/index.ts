@@ -355,3 +355,31 @@ export interface TranslationResponse {
   targetLanguage: string;
   translatedText: string;
 }
+
+export type TrainingMaterialType = 'article' | 'video' | 'pdf' | 'link';
+
+export interface TrainingTopic {
+  id: string;
+  slug: string;
+  title: string;
+  description?: string;
+  materialCount: number;
+}
+
+export interface TrainingMaterial {
+  id: string;
+  topicId: string;
+  title: string;
+  type: TrainingMaterialType;
+  summary?: string;
+  body?: string;
+  url?: string;
+  sourceName?: string;
+  sourceUrl?: string;
+  durationMinutes?: number;
+}
+
+export interface TrainingSearchResult extends TrainingMaterial {
+  topicTitle: string;
+  topicSlug: string;
+}
