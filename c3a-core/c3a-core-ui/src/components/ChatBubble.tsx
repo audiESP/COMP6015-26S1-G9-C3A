@@ -7,7 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { Message } from '../types';
+import { ChatSourceKind, Message } from '../types';
 
 interface Props {
   message: Message;
@@ -60,6 +60,29 @@ export const ChatBubble: React.FC<Props> = ({ message, isTyping }) => {
                 </View>
               ) : null,
             )}
+            {!isUser && message.sources && message.sources.length > 0 ? (
+              <View style={styles.sourcesSection}>
+                <Text style={styles.sourcesHeading}>Sources used</Text>
+                {message.sources.map((source) => {
+                  const page = formatPage(source.pageStart, source.pageEnd);
+                  const details = [source.section, page, ...(source.recordTypes ?? [])]
+                    .filter(Boolean)
+                    .join(' · ');
+                  return (
+                    <View key={source.id} style={styles.sourceRow}>
+                      <View style={[styles.sourceKind, sourceKindStyles[source.kind]]}>
+                        <Text style={styles.sourceKindText}>{sourceKindLabels[source.kind]}</Text>
+                      </View>
+                      <View style={styles.sourceContent}>
+                        <Text style={styles.sourceLabel}>{source.label}</Text>
+                        {details ? <Text style={styles.sourceDetails}>{details}</Text> : null}
+                        <Text style={styles.sourceReason}>{source.reason}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
           </>
         )}
       </View>
@@ -94,6 +117,7 @@ const styles = StyleSheet.create({
   assistantBubble: {
     backgroundColor: '#FFFFFF',
     borderBottomLeftRadius: 4,
+    maxWidth: '88%',
   },
   text: { fontSize: 15, lineHeight: 21 },
   userText: { color: '#FFFFFF' },
@@ -120,4 +144,77 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   fileTagText: { color: '#0D7377', fontSize: 12 },
+  sourcesSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#C9D7D5',
+    marginTop: 12,
+    paddingTop: 10,
+  },
+  sourcesHeading: {
+    color: '#284443',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  sourceRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 7,
+  },
+  sourceKind: {
+    borderRadius: 4,
+    marginRight: 8,
+    marginTop: 1,
+    minWidth: 62,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  sourceKindText: {
+    color: '#263332',
+    fontSize: 10,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  sourceContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sourceLabel: {
+    color: '#183837',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+  },
+  sourceDetails: {
+    color: '#526563',
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 1,
+  },
+  sourceReason: {
+    color: '#526563',
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 2,
+  },
 });
+
+const sourceKindLabels: Record<ChatSourceKind, string> = {
+  guideline: 'Guideline',
+  patient_record: 'Patient',
+  visit_context: 'Visit',
+  general_knowledge: 'General',
+};
+
+const sourceKindStyles: Record<ChatSourceKind, { backgroundColor: string }> = {
+  guideline: { backgroundColor: '#DCEDEA' },
+  patient_record: { backgroundColor: '#E8E3F0' },
+  visit_context: { backgroundColor: '#F2E8CF' },
+  general_knowledge: { backgroundColor: '#E6EAED' },
+};
+
+function formatPage(pageStart?: number, pageEnd?: number): string | null {
+  if (pageStart == null) return null;
+  if (pageEnd == null || pageStart === pageEnd) return `p. ${pageStart}`;
+  return `pp. ${pageStart}-${pageEnd}`;
+}

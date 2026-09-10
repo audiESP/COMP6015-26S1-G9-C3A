@@ -3,6 +3,8 @@ import { NativeModules, Platform } from 'react-native';
 import {
   ApiChatRequest,
   ApiChatResponse,
+  ChatSourceReference,
+  AlertAction,
   CareTaskStatus,
   LocationSnapshot,
   MedicationSupportRecord,
@@ -104,7 +106,14 @@ export class ApiError extends Error {
 
 export type ChatStreamEvent =
   | { type: 'token'; content: string }
-  | { type: 'done'; sources?: string[]; appendSources?: boolean }
+  | {
+      type: 'done';
+      sources?: string[];
+      sourceReferences?: ChatSourceReference[];
+      appendSources?: boolean;
+      route?: Record<string, unknown>;
+      model?: Record<string, unknown>;
+    }
   | { type: 'error'; message: string };
 
 async function fetchWithTimeout(
@@ -248,8 +257,13 @@ export async function fetchVisitQueue(
   });
 }
 
-export async function fetchVisitScenario(visitId: string): Promise<ScenarioContext> {
-  return requestJson(`/visits/${encodeURIComponent(visitId)}`, {
+export async function fetchVisitScenario(
+  visitId: string,
+  workerId: string,
+  role: 'care_worker' | 'nurse' | 'supervisor',
+): Promise<ScenarioContext> {
+  const query = new URLSearchParams({ workerId, role }).toString();
+  return requestJson(`/visits/${encodeURIComponent(visitId)}?${query}`, {
     method: 'GET',
   });
 }
@@ -269,10 +283,29 @@ export async function fetchPatientSummary(
   }, 300000);
 }
 
-export async function updatePatientProfile(patient: PatientInfo): Promise<ScenarioContext> {
+export async function transitionVisitAlert(
+  visitId: string,
+  alertId: string,
+  workerId: string,
+  role: 'care_worker' | 'nurse' | 'supervisor',
+  action: AlertAction,
+  note?: string,
+): Promise<ScenarioContext> {
+  return requestJson(`/visits/${encodeURIComponent(visitId)}/alerts/${encodeURIComponent(alertId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ workerId, role, action, note }),
+  });
+}
+
+export async function updatePatientProfile(
+  patient: PatientInfo,
+  visitId: string,
+  workerId: string,
+  role: 'care_worker' | 'nurse' | 'supervisor',
+): Promise<ScenarioContext> {
   return requestJson(`/patients/${encodeURIComponent(patient.id)}/profile`, {
     method: 'PATCH',
-    body: JSON.stringify(patient),
+    body: JSON.stringify({ ...patient, visitId, workerId, role }),
   });
 }
 

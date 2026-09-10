@@ -6,6 +6,26 @@ export interface Message {
   content: string;
   timestamp: Date;
   attachments?: Attachment[];
+  sources?: ChatSourceReference[];
+}
+
+export type ChatSourceKind =
+  | 'guideline'
+  | 'patient_record'
+  | 'visit_context'
+  | 'general_knowledge';
+
+export interface ChatSourceReference {
+  id: string;
+  kind: ChatSourceKind;
+  label: string;
+  reason: string;
+  documentTitle?: string;
+  filename?: string;
+  pageStart?: number;
+  pageEnd?: number;
+  section?: string;
+  recordTypes?: string[];
 }
 
 export interface Attachment {
@@ -182,11 +202,29 @@ export interface ScenarioEvent {
 
 export interface RiskAlert {
   id: string;
+  alertKey?: string;
+  riskType?: string;
   level: 'low' | 'moderate' | 'high';
   title: string;
   message: string;
-  source?: 'rules' | 'rag' | 'ai';
+  source?: 'rules' | 'rag' | 'ai' | 'manual';
+  status?: 'active' | 'acknowledged' | 'resolved' | 'dismissed';
+  visitId?: string;
+  assignedWorkerId?: string;
+  generatedFromEventId?: string;
+  details?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+  acknowledgedAt?: string;
+  acknowledgedByWorkerId?: string;
+  resolvedAt?: string;
+  resolvedByWorkerId?: string;
+  dismissedAt?: string;
+  dismissedByWorkerId?: string;
+  reviewNote?: string;
 }
+
+export type AlertAction = 'acknowledge' | 'resolve' | 'dismiss';
 
 export interface RiskSuggestion {
   riskType: string;
@@ -242,6 +280,8 @@ export interface ApiChatRequest {
 export interface ApiChatResponse {
   reply: string;
   sessionId?: string;
+  sources?: string[];
+  sourceReferences?: ChatSourceReference[];
 }
 
 export interface CareOutcomeFormAnswers {

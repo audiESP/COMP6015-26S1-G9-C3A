@@ -193,6 +193,41 @@ class OllamaMessageTest(unittest.TestCase):
         self.assertNotIn("250 words or fewer", messages[0]["content"])
         self.assertIn("Keep the answer concise", messages[0]["content"])
 
+    def test_medication_support_and_risk_lifecycle_are_rendered(self):
+        messages = _build_ollama_messages(
+            [("user", "What needs follow-up?")],
+            medication_support=SimpleNamespace(
+                status="partial",
+                timestamp="2026-09-03T09:10:00Z",
+                notes="One item was not taken.",
+                hcwId="worker-1",
+                medicationNames=["Metformin", "Warfarin"],
+                medicationItems=[
+                    {"name": "Metformin", "takenStatus": "taken", "takenAt": "09:05"},
+                    {"name": "Warfarin", "takenStatus": "not_taken"},
+                ],
+            ),
+            risks=[SimpleNamespace(
+                title="Medication not taken",
+                level="high",
+                message="Follow-up is required.",
+                riskType="medication_not_taken",
+                status="acknowledged",
+                details={"medication": "Warfarin"},
+                reviewNote="Supervisor notified",
+            )],
+        )
+
+        system_content = messages[0]["content"]
+        self.assertIn("## Medication Support Record", system_content)
+        self.assertIn("Status: partial", system_content)
+        self.assertIn("Metformin: taken at 09:05", system_content)
+        self.assertIn("Warfarin: not_taken", system_content)
+        self.assertIn("type: medication_not_taken", system_content)
+        self.assertIn("status: acknowledged", system_content)
+        self.assertIn('"medication": "Warfarin"', system_content)
+        self.assertIn("review note: Supervisor notified", system_content)
+
 
 if __name__ == "__main__":
     unittest.main()

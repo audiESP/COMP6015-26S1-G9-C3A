@@ -14,7 +14,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 
 import uvicorn
 import psycopg
@@ -27,6 +27,7 @@ from app.ai_client import AiClient, AiServiceUnavailable
 from app.db import DatabaseHealthChecker, close_database_pool, open_database_pool
 from app.logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
 from app.repositories.visit_repository import (
+    VisitAccessError,
     VisitNotFoundError,
     VisitRepository,
     VisitRepositoryUnavailable,
@@ -35,6 +36,7 @@ from app.repositories.visit_repository import (
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    AlertActionRequest,
     CompleteVisitRequest,
     GenerateVisitReportRequest,
     GenerateVisitReportResponse,
@@ -117,18 +119,6 @@ def _preview(text: str, limit: int = 180) -> str:
     return f"{compact[:limit]}..."
 
 
-def _reply_with_sources(reply: str, sources: list[str]) -> str:
-    if not sources:
-        return reply
-    source_lines = "\n".join(f"{index}. {source}" for index, source in enumerate(sources, start=1))
-    return f"{reply.rstrip()}\n\nSources:\n{source_lines}"
-
-
-def _uses_database_context(ai_response) -> bool:
-    database_context = (ai_response.rag or {}).get("database_context", {})
-    return bool(database_context.get("used_for_chat"))
-
-
 def _visit_report_prompt(req: GenerateVisitReportRequest) -> str:
     return (
         "Generate a standardised home-care visit report for records. "
@@ -161,6 +151,8 @@ def _visit_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, VisitNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, VisitAccessError):
+        return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, VisitValidationError):
         return HTTPException(status_code=400, detail=str(exc))
     if isinstance(exc, psycopg.errors.InvalidTextRepresentation):
@@ -197,9 +189,15 @@ def worker_shift_summary(worker_id: str, date: date):
 
 
 @app.get("/visits/{visit_id}", response_model=ScenarioResponse)
-def get_visit(visit_id: str):
+def get_visit(
+    visit_id: str,
+    workerId: str,
+    role: Literal["care_worker", "nurse", "supervisor"],
+):
     try:
-        return ScenarioResponse.model_validate(visit_repository.get_scenario(visit_id))
+        return ScenarioResponse.model_validate(
+            visit_repository.get_scenario(visit_id, workerId, role)
+        )
     except Exception as exc:
         raise _visit_error(exc) from exc
 
@@ -211,7 +209,9 @@ def update_patient_profile(patient_id: str, req: UpdatePatientProfileRequest):
         if req.name is not None:
             payload["displayName"] = req.name
         return ScenarioResponse.model_validate(
-            visit_repository.update_patient_profile(patient_id, payload)
+            visit_repository.update_patient_profile(
+                patient_id, payload, req.visitId, req.workerId, req.role
+            )
         )
     except Exception as exc:
         raise _visit_error(exc) from exc
@@ -263,6 +263,23 @@ def update_medication_support(visit_id: str, req: MedicationSupportRequest):
     try:
         return ScenarioResponse.model_validate(
             visit_repository.update_medication_support(visit_id, req.model_dump(exclude_none=True))
+        )
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.patch("/visits/{visit_id}/alerts/{alert_id}", response_model=ScenarioResponse)
+def transition_visit_alert(visit_id: str, alert_id: str, req: AlertActionRequest):
+    try:
+        return ScenarioResponse.model_validate(
+            visit_repository.transition_alert(
+                visit_id,
+                alert_id,
+                req.action,
+                req.workerId,
+                req.role,
+                req.note,
+            )
         )
     except Exception as exc:
         raise _visit_error(exc) from exc
@@ -377,9 +394,11 @@ async def chat(req: ChatRequest, request: Request):
             "API POST /chat ai_response=%s",
             preview_object(ai_response.model_dump()),
         )
-        if _uses_database_context(ai_response):
-            return ChatResponse(reply=ai_response.reply)
-        return ChatResponse(reply=_reply_with_sources(ai_response.reply, ai_response.sources))
+        return ChatResponse(
+            reply=ai_response.reply,
+            sources=ai_response.sources,
+            sourceReferences=ai_response.sourceReferences,
+        )
     except AiServiceUnavailable as exc:
         raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 

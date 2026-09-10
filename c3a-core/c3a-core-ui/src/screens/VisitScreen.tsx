@@ -27,6 +27,7 @@ import { useChatStore } from '../store/chatStore';
 import { useScenarioStore } from '../store/scenarioStore';
 import {
   Attachment,
+  AlertAction,
   CareTask,
   CareOutcomeFormAnswers,
   LocationSnapshot,
@@ -38,6 +39,7 @@ import {
   RiskAlert,
   RiskSuggestion,
   TranslationResponse,
+  ScenarioContext,
   VisitContext,
   VisitLifecycleStep,
   VisitQueueItem,
@@ -202,6 +204,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     completeVisit,
     updateTask,
     updateMedicationSupport,
+    updateAlert,
     updatePatient,
     selectVisit,
     goToNextVisit,
@@ -372,7 +375,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
         taskContext: scenario.tasks,
         medicationSupportContext: scenario.medicationSupport,
         eventContext: scenario.events,
-        riskContext: scenario.alerts,
+        riskContext: activeAlerts,
         careOutcomeForm,
       });
       setVisitReport(response.report);
@@ -381,7 +384,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     } finally {
       setReportGenerating(false);
     }
-  }, [careOutcomeForm, reportGenerating, scenario]);
+  }, [activeAlerts, careOutcomeForm, reportGenerating, scenario]);
 
   const handleFinishVisitWithCheckOut = useCallback(async () => {
     if (isCompleted || workflowSaving || incompleteRequiredTaskCount > 0 || !visitReport) return;
@@ -445,7 +448,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
         currentTaskContext: selectedTask,
         taskContext: scenario.tasks,
         eventContext: scenario.events,
-        riskContext: scenario.alerts,
+        riskContext: activeAlerts,
       });
       setRiskSuggestions(result.suggestions);
     } catch (error) {
@@ -453,7 +456,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
     } finally {
       setRiskReviewLoading(false);
     }
-  }, [riskReviewLoading, riskReviewNote, scenario, selectedTask]);
+  }, [activeAlerts, riskReviewLoading, riskReviewNote, scenario, selectedTask]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -579,6 +582,8 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl }) => {
               summaryRecords={summaryRecords}
               summaryLoading={summaryLoading}
               summaryError={summaryError}
+              disabled={workflowSaving}
+              onAlertAction={updateAlert}
             />
           )}
 
@@ -1681,6 +1686,8 @@ function PatientDetailsPanel({
   summaryRecords,
   summaryLoading,
   summaryError,
+  disabled,
+  onAlertAction,
 }: {
   patient: PatientInfo;
   worker: string;
@@ -1690,7 +1697,11 @@ function PatientDetailsPanel({
   summaryRecords: PatientSummaryRecord[];
   summaryLoading: boolean;
   summaryError: string | null;
+  disabled: boolean;
+  onAlertAction: (alertId: string, action: AlertAction, note?: string) => Promise<ScenarioContext>;
 }) {
+  const openAlerts = alerts.filter((alert) => !alert.status || alert.status === 'active' || alert.status === 'acknowledged');
+  const closedAlerts = alerts.filter((alert) => alert.status === 'resolved' || alert.status === 'dismissed');
   return (
     <View style={styles.tabPanel}>
       <SectionHeader title="AI patient summary" detail="From clinical records" />
@@ -1736,12 +1747,28 @@ function PatientDetailsPanel({
         <SummaryLine label="Notes" value={patient.notes ?? 'Not recorded'} />
       </View>
 
-      <SectionHeader title="Things to watch" detail={`${alerts.length} noted`} />
+      <SectionHeader title="Things to watch" detail={`${openAlerts.length} open`} />
       <View style={styles.alertStack}>
-        {alerts.length === 0 ? (
+        {openAlerts.length === 0 ? (
           <Text style={styles.emptyTimeline}>Nothing urgent is flagged right now.</Text>
         ) : (
-          alerts.map((alert) => <AlertCard key={alert.id} alert={alert} />)
+          openAlerts.map((alert) => (
+            <AlertCard
+              key={alert.id}
+              alert={alert}
+              disabled={disabled}
+              onAction={onAlertAction}
+            />
+          ))
+        )}
+      </View>
+
+      <SectionHeader title="Alert history" detail={`${closedAlerts.length} closed`} />
+      <View style={styles.alertStack}>
+        {closedAlerts.length === 0 ? (
+          <Text style={styles.emptyTimeline}>No resolved or dismissed alerts.</Text>
+        ) : (
+          closedAlerts.map((alert) => <AlertCard key={alert.id} alert={alert} disabled />)
         )}
       </View>
 
@@ -2079,11 +2106,60 @@ function SectionHeader({ title, detail }: { title: string; detail: string }) {
   );
 }
 
-function AlertCard({ alert }: { alert: RiskAlert }) {
+function AlertCard({
+  alert,
+  disabled = false,
+  onAction,
+}: {
+  alert: RiskAlert;
+  disabled?: boolean;
+  onAction?: (alertId: string, action: AlertAction, note?: string) => Promise<ScenarioContext>;
+}) {
+  const [note, setNote] = useState(alert.reviewNote ?? '');
+  const isOpen = !alert.status || alert.status === 'active' || alert.status === 'acknowledged';
+  const status = alert.status ?? 'active';
+  const actionDate = alert.resolvedAt ?? alert.dismissedAt ?? alert.acknowledgedAt ?? alert.createdAt;
+  const actionWorker = alert.resolvedByWorkerId ?? alert.dismissedByWorkerId ?? alert.acknowledgedByWorkerId;
+  const detailEntries = Object.entries(alert.details ?? {}).filter(
+    ([key, value]) => key !== 'triggered_by' && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'),
+  );
   return (
     <View style={[styles.alertCard, alertTone(alert.level)]}>
-      <Text style={styles.alertTitle}>{alert.title}</Text>
+      <View style={styles.alertHeaderRow}>
+        <Text style={styles.alertTitle}>{alert.title}</Text>
+        <Text style={styles.alertStatus}>{status.toUpperCase()}</Text>
+      </View>
       <Text style={styles.alertMessage}>{alert.message}</Text>
+      <Text style={styles.alertMeta}>
+        {(alert.riskType ?? 'risk').replace(/_/g, ' ')}
+        {actionDate ? ` · ${formatSavedDateTime(actionDate)}` : ''}
+        {actionWorker ? ` · ${actionWorker}` : ''}
+      </Text>
+      {detailEntries.length > 0 && (
+        <Text style={styles.alertDetails}>
+          {detailEntries.map(([key, value]) => `${key.replace(/_/g, ' ')}: ${String(value)}`).join(' · ')}
+        </Text>
+      )}
+      {alert.reviewNote && <Text style={styles.alertReviewNote}>Note: {alert.reviewNote}</Text>}
+      {isOpen && onAction && (
+        <>
+          <TextInput
+            value={note}
+            onChangeText={setNote}
+            placeholder="Optional review note"
+            placeholderTextColor="#7A8B83"
+            style={styles.alertNoteInput}
+            editable={!disabled}
+          />
+          <View style={styles.alertActions}>
+            {status === 'active' && (
+              <ActionButton label="Review" tone="muted" onPress={() => onAction(alert.id, 'acknowledge', note)} disabled={disabled} />
+            )}
+            <ActionButton label="Resolve" tone="success" onPress={() => onAction(alert.id, 'resolve', note)} disabled={disabled} />
+            <ActionButton label="Dismiss" tone="warn" onPress={() => onAction(alert.id, 'dismiss', note)} disabled={disabled} />
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -2455,8 +2531,25 @@ const styles = StyleSheet.create({
   alertHigh: { borderLeftColor: '#A83B32', backgroundColor: '#FFF5F3' },
   alertModerate: { borderLeftColor: '#B27A1A', backgroundColor: '#FFF9EC' },
   alertLow: { borderLeftColor: '#2E6F73', backgroundColor: '#F0F8F7' },
-  alertTitle: { color: '#16231E', fontSize: 14, fontWeight: '800' },
+  alertHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
+  alertTitle: { color: '#16231E', fontSize: 14, fontWeight: '800', flex: 1 },
+  alertStatus: { color: '#60746B', fontSize: 10, fontWeight: '900', flexShrink: 0 },
   alertMessage: { color: '#3D4E47', fontSize: 13, lineHeight: 19, marginTop: 4 },
+  alertMeta: { color: '#60746B', fontSize: 11, fontWeight: '700', marginTop: 7 },
+  alertDetails: { color: '#3D4E47', fontSize: 11, lineHeight: 16, marginTop: 5 },
+  alertReviewNote: { color: '#3D4E47', fontSize: 12, lineHeight: 17, marginTop: 6 },
+  alertNoteInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#C9D7D1',
+    borderRadius: 7,
+    color: '#16231E',
+    fontSize: 12,
+    marginTop: 9,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  alertActions: { flexDirection: 'row', gap: 7, marginTop: 8 },
   riskSuggestionCard: {
     borderRadius: 8,
     borderWidth: 1,

@@ -1,6 +1,6 @@
 // src/store/chatStore.ts
 import { useState, useCallback } from 'react';
-import { ChatSession, Message, PatientInfo, Attachment } from '../types';
+import { ChatSession, Message, PatientInfo, Attachment, ChatSourceReference } from '../types';
 
 let _sessionCounter = 1;
 
@@ -79,14 +79,21 @@ export function useChatStore() {
   );
 
   const updateMessage = useCallback(
-    (sessionId: string, messageId: string, content: string) => {
+    (
+      sessionId: string,
+      messageId: string,
+      content: string,
+      sources?: ChatSourceReference[],
+    ) => {
       setSessions((prev) =>
         prev.map((session) =>
           session.id === sessionId
             ? {
                 ...session,
                 messages: session.messages.map((message) =>
-                  message.id === messageId ? { ...message, content } : message,
+                  message.id === messageId
+                    ? { ...message, content, ...(sources ? { sources } : {}) }
+                    : message,
                 ),
                 updatedAt: new Date(),
               }

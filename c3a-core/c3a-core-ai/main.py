@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from chat_router import RouteDecision, decide_route, with_effective_mode
 from db_context import DbContextResult, DbContextRetriever
@@ -152,6 +152,18 @@ class CareTaskContext(BaseModel):
     detail: Optional[str] = None
 
 
+class MedicationSupportContext(BaseModel):
+    id: Optional[str] = None
+    visitId: Optional[str] = None
+    taskId: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    timestamp: Optional[str] = None
+    hcwId: Optional[str] = None
+    medicationNames: list[str] = Field(default_factory=list)
+    medicationItems: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ScenarioEventContext(BaseModel):
     id: Optional[str] = None
     type: Optional[str] = None
@@ -161,10 +173,26 @@ class ScenarioEventContext(BaseModel):
 
 class RiskContext(BaseModel):
     id: Optional[str] = None
+    alertKey: Optional[str] = None
+    riskType: Optional[str] = None
     level: Optional[str] = None
     title: Optional[str] = None
     message: Optional[str] = None
     source: Optional[str] = None
+    status: Optional[str] = None
+    visitId: Optional[str] = None
+    assignedWorkerId: Optional[str] = None
+    generatedFromEventId: Optional[str] = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+    acknowledgedAt: Optional[str] = None
+    acknowledgedByWorkerId: Optional[str] = None
+    resolvedAt: Optional[str] = None
+    resolvedByWorkerId: Optional[str] = None
+    dismissedAt: Optional[str] = None
+    dismissedByWorkerId: Optional[str] = None
+    reviewNote: Optional[str] = None
 
 
 class IncidentChecklistItem(BaseModel):
@@ -186,6 +214,7 @@ class AiChatRequest(BaseModel):
     visitContext: Optional[VisitContext] = None
     currentTaskContext: Optional[CareTaskContext] = None
     taskContext: Optional[list[CareTaskContext]] = None
+    medicationSupportContext: Optional[MedicationSupportContext] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None
     checklistContext: Optional[list[IncidentChecklistItem]] = None
@@ -193,11 +222,25 @@ class AiChatRequest(BaseModel):
     responseWordLimit: Optional[int] = 250
 
 
+class SourceReference(BaseModel):
+    id: str
+    kind: Literal["guideline", "patient_record", "visit_context", "general_knowledge"]
+    label: str
+    reason: str
+    documentTitle: Optional[str] = None
+    filename: Optional[str] = None
+    pageStart: Optional[int] = None
+    pageEnd: Optional[int] = None
+    section: Optional[str] = None
+    recordTypes: list[str] = Field(default_factory=list)
+
+
 class AiChatResponse(BaseModel):
     reply: str
-    sources: list[str] = []
-    rag: dict[str, Any] = {}
-    model: dict[str, Any] = {}
+    sources: list[str] = Field(default_factory=list)
+    sourceReferences: list[SourceReference] = Field(default_factory=list)
+    rag: dict[str, Any] = Field(default_factory=dict)
+    model: dict[str, Any] = Field(default_factory=dict)
 
 
 class TranslationRequest(BaseModel):
@@ -219,6 +262,7 @@ class RiskAnalysisRequest(BaseModel):
     visitContext: Optional[VisitContext] = None
     currentTaskContext: Optional[CareTaskContext] = None
     taskContext: Optional[list[CareTaskContext]] = None
+    medicationSupportContext: Optional[MedicationSupportContext] = None
     eventContext: Optional[list[ScenarioEventContext]] = None
     riskContext: Optional[list[RiskContext]] = None
 
@@ -319,6 +363,7 @@ def _risk_analysis_prompt(req: RiskAnalysisRequest) -> str:
         "visit": req.visitContext.model_dump(exclude_none=True) if req.visitContext else {},
         "current_task": req.currentTaskContext.model_dump(exclude_none=True) if req.currentTaskContext else {},
         "tasks": [item.model_dump(exclude_none=True) for item in (req.taskContext or [])],
+        "medication_support": req.medicationSupportContext.model_dump(exclude_none=True) if req.medicationSupportContext else {},
         "events": [item.model_dump(exclude_none=True) for item in (req.eventContext or [])],
         "active_risks": [item.model_dump(exclude_none=True) for item in (req.riskContext or [])],
     }
@@ -557,6 +602,7 @@ async def chat(req: AiChatRequest):
     response = AiChatResponse(
         reply=reply,
         sources=_source_labels(accepted_rag_chunks),
+        sourceReferences=_source_references(req, prepared),
         rag=rag_payload,
         model=service.status(),
     )
@@ -580,6 +626,7 @@ async def analyse_risk(req: RiskAnalysisRequest):
             visit=req.visitContext,
             current_task=req.currentTaskContext,
             tasks=req.taskContext or [],
+            medication_support=req.medicationSupportContext,
             events=req.eventContext or [],
             risks=req.riskContext or [],
         )
@@ -627,8 +674,11 @@ async def chat_stream(req: AiChatRequest):
                 {
                     "type": "done",
                     "sources": sources,
-                    "appendSources": bool(sources)
-                    and not prepared.db_context_result.metadata.get("used_for_chat"),
+                    "sourceReferences": [
+                        item.model_dump(exclude_none=True)
+                        for item in _source_references(req, prepared)
+                    ],
+                    "appendSources": bool(sources),
                     "route": _route_payload(prepared),
                     "model": service.status(),
                 }
@@ -760,6 +810,7 @@ def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, 
         "visit": req.visitContext,
         "current_task": req.currentTaskContext,
         "tasks": req.taskContext or [],
+        "medication_support": req.medicationSupportContext,
         "events": req.eventContext or [],
         "risks": req.riskContext or [],
         "checklist": req.checklistContext or [],
@@ -1040,6 +1091,88 @@ def _source_labels(chunks: list[RetrievedChunk]) -> list[str]:
         seen.add(source)
         labels.append(source)
     return labels
+
+
+def _source_references(req: AiChatRequest, prepared: PreparedChat) -> list[SourceReference]:
+    references = [
+        SourceReference(
+            id=f"guideline-{index}",
+            kind="guideline",
+            label=_source_label(chunk),
+            reason="Retrieved as relevant clinical or care guidance for this answer.",
+            documentTitle=chunk.source_title or None,
+            filename=chunk.source_filename or None,
+            pageStart=chunk.page_start,
+            pageEnd=chunk.page_end,
+            section=chunk.section_heading or None,
+        )
+        for index, chunk in enumerate(prepared.accepted_rag_chunks, start=1)
+    ]
+
+    db_metadata = prepared.db_context_result.metadata
+    if db_metadata.get("used_for_chat"):
+        record_types = [
+            _friendly_record_type(intent)
+            for intent in db_metadata.get("matched_intents", [])
+        ]
+        references.append(
+            SourceReference(
+                id="patient-record",
+                kind="patient_record",
+                label="Linked patient record",
+                reason="Used matching synthetic patient records to answer the patient-specific part of the question.",
+                recordTypes=list(dict.fromkeys(record_types)),
+            )
+        )
+
+    context_types = _supplied_context_types(req, prepared.effective_route.uses_db)
+    if context_types:
+        references.append(
+            SourceReference(
+                id="visit-context",
+                kind="visit_context",
+                label="Current visit context",
+                reason=f"Used the supplied {', '.join(context_types)} to tailor the response to this visit.",
+                recordTypes=context_types,
+            )
+        )
+
+    if not prepared.accepted_rag_chunks and not db_metadata.get("used_for_chat"):
+        references.append(
+            SourceReference(
+                id="general-knowledge",
+                kind="general_knowledge",
+                label=f"General guidance from {service.status().get('model', 'the configured model')}",
+                reason="No matching project guideline or patient database evidence was used; the answer relies on the configured model and any supplied visit context.",
+            )
+        )
+    return references
+
+
+def _friendly_record_type(intent: str) -> str:
+    return {
+        "patients": "patient profile",
+        "conditions": "conditions",
+        "medications": "medications",
+        "allergies": "allergies",
+        "encounters": "encounters",
+        "observations": "observations",
+        "cald_profiles": "cultural and communication profile",
+    }.get(intent, intent.replace("_", " "))
+
+
+def _supplied_context_types(req: AiChatRequest, include_patient: bool) -> list[str]:
+    candidates = [
+        (include_patient and req.patientContext is not None, "patient profile"),
+        (req.workerContext is not None, "worker role"),
+        (req.visitContext is not None, "visit details"),
+        (req.currentTaskContext is not None or bool(req.taskContext), "care tasks"),
+        (req.medicationSupportContext is not None, "medication support record"),
+        (bool(req.eventContext), "recent events"),
+        (bool(req.riskContext), "active risk alerts"),
+        (bool(req.checklistContext), "incident checklist"),
+    ]
+    return [label for present, label in candidates if present]
 
 
 def _source_label(chunk: RetrievedChunk) -> str:

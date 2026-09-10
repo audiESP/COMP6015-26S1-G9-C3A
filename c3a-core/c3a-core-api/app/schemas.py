@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
@@ -102,10 +102,26 @@ class ScenarioEventContext(BaseModel):
 
 class RiskContext(BaseModel):
     id: Optional[str] = None
+    alertKey: Optional[str] = None
+    riskType: Optional[str] = None
     level: Optional[str] = None
     title: Optional[str] = None
     message: Optional[str] = None
     source: Optional[str] = None
+    status: Optional[str] = None
+    visitId: Optional[str] = None
+    assignedWorkerId: Optional[str] = None
+    generatedFromEventId: Optional[str] = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+    acknowledgedAt: Optional[str] = None
+    acknowledgedByWorkerId: Optional[str] = None
+    resolvedAt: Optional[str] = None
+    resolvedByWorkerId: Optional[str] = None
+    dismissedAt: Optional[str] = None
+    dismissedByWorkerId: Optional[str] = None
+    reviewNote: Optional[str] = None
 
 
 class IncidentChecklistItem(BaseModel):
@@ -140,6 +156,9 @@ class ScenarioResponse(BaseModel):
 
 
 class UpdatePatientProfileRequest(BaseModel):
+    visitId: str
+    workerId: str
+    role: Literal['care_worker', 'nurse', 'supervisor']
     name: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
@@ -172,23 +191,30 @@ class LocationSnapshotRequest(BaseModel):
 
 
 class StartVisitRequest(BaseModel):
-    workerId: Optional[str] = None
+    workerId: str
     checkIn: Optional[LocationSnapshotRequest] = None
 
 
 class CompleteVisitRequest(BaseModel):
-    workerId: Optional[str] = None
+    workerId: str
     checkOut: Optional[LocationSnapshotRequest] = None
 
 
 class TaskStatusRequest(BaseModel):
     status: str
-    workerId: Optional[str] = None
+    workerId: str
 
 
 class TaskIssueRequest(BaseModel):
     type: str
-    workerId: Optional[str] = None
+    workerId: str
+
+
+class AlertActionRequest(BaseModel):
+    workerId: str
+    role: Literal['care_worker', 'nurse', 'supervisor']
+    action: Literal['acknowledge', 'resolve', 'dismiss']
+    note: Optional[str] = None
 
 
 class MedicationSupportRequest(BaseModel):
@@ -228,9 +254,24 @@ class ChatRequest(BaseModel):
     responseWordLimit: Optional[int] = None
 
 
+class SourceReference(BaseModel):
+    id: str
+    kind: Literal["guideline", "patient_record", "visit_context", "general_knowledge"]
+    label: str
+    reason: str
+    documentTitle: Optional[str] = None
+    filename: Optional[str] = None
+    pageStart: Optional[int] = None
+    pageEnd: Optional[int] = None
+    section: Optional[str] = None
+    recordTypes: list[str] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     reply: str
     sessionId: Optional[str] = None
+    sources: list[str] = Field(default_factory=list)
+    sourceReferences: list[SourceReference] = Field(default_factory=list)
 
 
 class GenerateVisitReportRequest(BaseModel):
@@ -286,9 +327,10 @@ class UploadResponse(BaseModel):
 
 class AiChatResponse(BaseModel):
     reply: str
-    sources: list[str] = []
-    rag: dict[str, Any] = {}
-    model: dict[str, Any] = {}
+    sources: list[str] = Field(default_factory=list)
+    sourceReferences: list[SourceReference] = Field(default_factory=list)
+    rag: dict[str, Any] = Field(default_factory=dict)
+    model: dict[str, Any] = Field(default_factory=dict)
 
 
 class AiTranslationResponse(BaseModel):

@@ -1,15 +1,25 @@
 // src/hooks/useChat.ts
 import { useState, useCallback } from 'react';
 import { ApiError, streamChatMessage } from '../services/api';
-import { Attachment, PatientInfo, ScenarioContext } from '../types';
+import { Attachment, ChatSourceReference, PatientInfo, ScenarioContext } from '../types';
 
 interface UseChatOptions {
   ensureActiveSession: () => string;
   addMessage: (
     sessionId: string,
-    msg: { role: 'user' | 'assistant'; content: string; attachments?: Attachment[] },
+    msg: {
+      role: 'user' | 'assistant';
+      content: string;
+      attachments?: Attachment[];
+      sources?: ChatSourceReference[];
+    },
   ) => { id: string };
-  updateMessage: (sessionId: string, messageId: string, content: string) => void;
+  updateMessage: (
+    sessionId: string,
+    messageId: string,
+    content: string,
+    sources?: ChatSourceReference[],
+  ) => void;
   activeSession: { messages: any[]; patientInfo?: PatientInfo } | null;
   scenarioContext?: ScenarioContext;
 }
@@ -70,7 +80,9 @@ export function useChat({
           taskContext: scenarioContext?.tasks,
           medicationSupportContext: scenarioContext?.medicationSupport,
           eventContext: scenarioContext?.events,
-          riskContext: scenarioContext?.alerts,
+          riskContext: scenarioContext?.alerts.filter(
+            (alert) => !alert.status || alert.status === 'active' || alert.status === 'acknowledged',
+          ),
           checklistContext: scenarioContext?.incidentChecklist,
           attachments: apiAttachments,
         }, (event) => {
@@ -84,13 +96,23 @@ export function useChat({
                 content: streamedReply,
               }).id;
             }
-          } else if (event.type === 'done' && event.appendSources && event.sources?.length) {
-            const sources = event.sources
-              .map((source, index) => `${index + 1}. ${source}`)
-              .join('\n');
-            streamedReply = `${streamedReply.trimEnd()}\n\nSources:\n${sources}`;
+          } else if (event.type === 'done') {
+            const sources = event.sourceReferences?.length
+              ? event.sourceReferences
+              : (event.sources ?? []).map((source, index) => ({
+                  id: `legacy-source-${index + 1}`,
+                  kind: 'guideline' as const,
+                  label: source,
+                  reason: 'Retrieved as relevant guidance for this answer.',
+                }));
             if (assistantMessageId) {
-              updateMessage(sessionId, assistantMessageId, streamedReply);
+              updateMessage(sessionId, assistantMessageId, streamedReply, sources);
+            } else if (streamedReply || sources.length) {
+              assistantMessageId = addMessage(sessionId, {
+                role: 'assistant',
+                content: streamedReply,
+                sources,
+              }).id;
             }
           }
         });

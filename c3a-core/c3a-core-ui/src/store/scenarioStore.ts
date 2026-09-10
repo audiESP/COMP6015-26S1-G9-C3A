@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import {
+  AlertAction,
   CareTaskStatus,
   GeoPoint,
   IncidentChecklistItem,
@@ -23,6 +24,7 @@ import {
   finishVisit,
   reportTaskIssue as reportTaskIssueApi,
   startVisit as startVisitApi,
+  transitionVisitAlert,
   updateMedicationSupport as updateMedicationSupportApi,
   updatePatientProfile,
   updateTaskStatus,
@@ -458,7 +460,7 @@ export function useScenarioStore() {
       setVisitQueue(response.visits);
       const firstVisit = response.visits[0];
       if (firstVisit) {
-        const nextScenario = await fetchVisitScenario(firstVisit.id);
+        const nextScenario = await fetchVisitScenario(firstVisit.id, DEFAULT_WORKER_ID, 'care_worker');
         setScenario(nextScenario);
         setActiveVisitIndex(0);
       }
@@ -569,6 +571,17 @@ export function useScenarioStore() {
     );
   }, [runMutation, scenario.visit.id]);
 
+  const updateAlert = useCallback((alertId: string, action: AlertAction, note?: string) => {
+    return runMutation(() => transitionVisitAlert(
+      scenario.visit.id,
+      alertId,
+      scenario.worker.id,
+      scenario.worker.role,
+      action,
+      note,
+    ));
+  }, [runMutation, scenario.visit.id, scenario.worker.id, scenario.worker.role]);
+
   const requestLocationSnapshot = useCallback(async (
     type: LocationSnapshot['type'],
     note?: string,
@@ -611,14 +624,19 @@ export function useScenarioStore() {
   }, [completeVisit, scenario.visit.locationThresholdMeters, scenario.visit.plannedCoords]);
 
   const updatePatient = useCallback((patient: PatientInfo) => {
-    return runMutation(() => updatePatientProfile(patient));
-  }, [runMutation]);
+    return runMutation(() => updatePatientProfile(
+      patient,
+      scenario.visit.id,
+      scenario.worker.id,
+      scenario.worker.role,
+    ));
+  }, [runMutation, scenario.visit.id, scenario.worker.id, scenario.worker.role]);
 
   const selectVisit = useCallback(async (visitId: string) => {
     setIsLoading(true);
     setError(null);
     try {
-      const nextScenario = await fetchVisitScenario(visitId);
+      const nextScenario = await fetchVisitScenario(visitId, DEFAULT_WORKER_ID, 'care_worker');
       setScenario(nextScenario);
       const index = visitQueue.findIndex((visit) => visit.id === visitId);
       if (index >= 0) setActiveVisitIndex(index);
@@ -638,7 +656,9 @@ export function useScenarioStore() {
 
   const activeAlerts = useMemo(() => {
     const severity = { high: 0, moderate: 1, low: 2 };
-    return [...scenario.alerts].sort((a, b) => severity[a.level] - severity[b.level]);
+    return scenario.alerts
+      .filter((alert) => !alert.status || alert.status === 'active' || alert.status === 'acknowledged')
+      .sort((a, b) => severity[a.level] - severity[b.level]);
   }, [scenario.alerts]);
 
   const incidentChecklistComplete = scenario.incidentChecklist.every((item: IncidentChecklistItem) => item.completed);
@@ -669,6 +689,7 @@ export function useScenarioStore() {
     completeVisit,
     updateTask,
     updateMedicationSupport,
+    updateAlert,
     toggleIncidentCheck: undefined,
     updatePatient,
     selectVisit,

@@ -9,6 +9,21 @@ from typing import Any
 from uuid import UUID
 
 from app.db import get_database_connection
+from app.repositories.checklist_task_monitor import (
+    CHECKLIST_ALERT_KEY_PREFIX,
+    evaluate_checklist_task,
+)
+from app.repositories.location_monitor import (
+    LOCATION_ALERT_KEY,
+    derive_location_snapshot,
+    location_alert,
+    location_event_type,
+)
+from app.repositories.medication_risk_rules import (
+    MEDICATION_SUPPORT_ALERT_KEY,
+    MEDICATION_SUPPORT_RULES,
+    evaluate_medication_support,
+)
 
 
 class VisitRepositoryError(Exception):
@@ -27,13 +42,11 @@ class VisitValidationError(VisitRepositoryError):
     """Raised when a visit workflow payload is invalid."""
 
 
-MEDICATION_SUPPORT_STATUSES = {
-    "Completed",
-    "Delayed",
-    "Declined",
-    "Unavailable",
-    "Unable to Confirm",
-}
+class VisitAccessError(VisitRepositoryError):
+    """Raised when a worker cannot view or change a visit alert."""
+
+
+MEDICATION_SUPPORT_STATUSES = set(MEDICATION_SUPPORT_RULES)
 
 MEDICATION_TAKEN_STATUSES = {
     "Taken",
@@ -60,14 +73,107 @@ class VisitRepository:
             with connection.cursor() as cursor:
                 return self._list_visit_queue(cursor, worker_id, shift_date)
 
-    def get_scenario(self, visit_id: str) -> dict[str, Any]:
+    def get_scenario(
+        self,
+        visit_id: str,
+        requester_worker_id: str,
+        requester_role: str,
+    ) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                self._assert_visit_access(cursor, visit_id, requester_worker_id, requester_role)
                 return self._get_scenario(cursor, visit_id)
 
-    def update_patient_profile(self, patient_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def transition_alert(
+        self,
+        visit_id: str,
+        alert_id: str,
+        action: str,
+        worker_id: str,
+        role: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        target_status = {
+            "acknowledge": "acknowledged",
+            "resolve": "resolved",
+            "dismiss": "dismissed",
+        }.get(action)
+        if target_status is None:
+            raise VisitValidationError("Alert action is not supported")
+        clean_note = (note or "").strip() or None
+
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                self._assert_visit_access(cursor, visit_id, worker_id, role)
+                cursor.execute(
+                    """
+                    select id, status
+                    from c3a_app_risk_alerts
+                    where id = %s and visit_id = %s
+                    for update
+                    """,
+                    (alert_id, visit_id),
+                )
+                alert = cursor.fetchone()
+                if not alert:
+                    raise VisitNotFoundError(f"Alert {alert_id} was not found for visit {visit_id}")
+                previous_status = alert["status"]
+                if previous_status in ("resolved", "dismissed"):
+                    raise VisitValidationError("A closed alert cannot be changed")
+                if previous_status == target_status:
+                    return self._get_scenario(cursor, visit_id)
+
+                timestamp_column = {
+                    "acknowledged": "acknowledged_at",
+                    "resolved": "resolved_at",
+                    "dismissed": "dismissed_at",
+                }[target_status]
+                actor_column = {
+                    "acknowledged": "acknowledged_by_worker_id",
+                    "resolved": "resolved_by_worker_id",
+                    "dismissed": "dismissed_by_worker_id",
+                }[target_status]
+                cursor.execute(
+                    f"""
+                    update c3a_app_risk_alerts
+                    set status = %s,
+                        {timestamp_column} = now(),
+                        {actor_column} = %s,
+                        review_note = coalesce(%s, review_note),
+                        updated_at = now()
+                    where id = %s
+                    """,
+                    (target_status, worker_id, clean_note, alert_id),
+                )
+                cursor.execute(
+                    """
+                    insert into c3a_app_risk_alert_actions (
+                        alert_id, visit_id, action, previous_status,
+                        resulting_status, actor_worker_id, note
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (alert_id, visit_id, target_status, previous_status, target_status, worker_id, clean_note),
+                )
+                return self._get_scenario(cursor, visit_id)
+
+    def update_patient_profile(
+        self,
+        patient_id: str,
+        payload: dict[str, Any],
+        visit_id: str,
+        worker_id: str,
+        requested_role: str,
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "select id::text from c3a_app_visits where id = %s and patient_id = %s",
+                    (visit_id, patient_id),
+                )
+                if not cursor.fetchone():
+                    raise VisitNotFoundError(f"Visit {visit_id} was not found for patient {patient_id}")
+                self._assert_visit_access(cursor, visit_id, worker_id, requested_role)
                 cursor.execute(
                     """
                     insert into c3a_app_patient_profiles (
@@ -141,19 +247,19 @@ class VisitRepository:
                         "medications_override": _json_array_or_none(payload.get("medications")),
                     },
                 )
-                visit_id = self._latest_visit_for_patient(cursor, patient_id)
-                if not visit_id:
-                    raise VisitNotFoundError(f"No visit found for patient {patient_id}")
                 return self._get_scenario(cursor, visit_id)
 
     def start_visit(self, visit_id: str, worker_id: str | None, snapshot: dict[str, Any] | None) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 visit = self._visit_row_for_update(cursor, visit_id)
+                self._assert_visit_access(cursor, visit_id, worker_id)
+                snapshot = _derive_location_snapshot(snapshot, visit, "check_in") if snapshot else None
                 snapshot_id = self._upsert_location_snapshot(cursor, visit_id, snapshot) if snapshot else None
                 if snapshot_id:
-                    event_type = _location_event_type(snapshot, True)
-                    self._insert_event(cursor, visit_id, event_type, worker_id, location_snapshot_id=snapshot_id, note=snapshot.get("note"))
+                    event_type = location_event_type(snapshot, is_check_in=True)
+                    event_id = self._insert_event(cursor, visit_id, event_type, worker_id, location_snapshot_id=snapshot_id, note=snapshot.get("note"))
+                    self._sync_location_alert(cursor, visit_id, snapshot, event_id)
 
                 now_sql = "coalesce(arrived_at, now())"
                 cursor.execute(
@@ -189,6 +295,7 @@ class VisitRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._visit_row_for_update(cursor, visit_id)
+                self._assert_visit_access(cursor, visit_id, worker_id)
                 task = self._task_row_for_update(cursor, visit_id, task_id)
                 cursor.execute(
                     """
@@ -224,6 +331,7 @@ class VisitRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._visit_row_for_update(cursor, visit_id)
+                self._assert_visit_access(cursor, visit_id, worker_id)
                 self._task_row_for_update(cursor, visit_id, task_id)
                 cursor.execute(
                     """
@@ -259,6 +367,7 @@ class VisitRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._visit_row_for_update(cursor, visit_id)
+                self._assert_visit_access(cursor, visit_id, worker_id)
                 task = self._task_row_for_update(cursor, visit_id, task_id)
                 event_type, task_status, visit_status, lifecycle, alert = _issue_mapping(task, issue_type)
                 note = _issue_note(task, issue_type)
@@ -304,13 +413,14 @@ class VisitRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 visit = self._visit_row_for_update(cursor, visit_id)
+                worker_id = payload.get("hcwId")
+                self._assert_visit_access(cursor, visit_id, worker_id)
                 task_id = payload.get("taskId") or self._task_id_by_key(cursor, visit_id, "medication")
                 if not task_id:
                     raise VisitValidationError("This visit does not have a medication support task")
                 medication_names = payload.get("medicationNames") or self._patient_medications_for_visit(cursor, visit_id)
                 medication_items = _normalise_medication_items(payload.get("medicationItems"), medication_names)
-                worker_id = payload.get("hcwId") or visit["worker_id"]
-                recorded_at = payload.get("timestamp") or datetime.utcnow()
+                recorded_at = payload.get("timestamp") or datetime.now(timezone.utc)
                 cursor.execute(
                     """
                     insert into c3a_app_medication_support_records (
@@ -367,7 +477,12 @@ class VisitRepository:
                     """,
                     (f"Medication support status: {status}" + (f" - {notes}" if notes else ""), task_id),
                 )
-                visit_status, lifecycle = _medication_support_visit_state(status, visit["status"], visit["lifecycle_step"])
+                decision = evaluate_medication_support(
+                    status,
+                    notes=notes,
+                    current_visit_status=visit["status"],
+                    current_lifecycle_step=visit["lifecycle_step"],
+                )
                 cursor.execute(
                     """
                     update c3a_app_visits
@@ -376,21 +491,21 @@ class VisitRepository:
                         updated_at = now()
                     where id = %s
                     """,
-                    (visit_status, lifecycle, visit_id),
+                    (decision["visit_status"], decision["lifecycle_step"], visit_id),
                 )
                 event_id = self._insert_event(
                     cursor,
                     visit_id,
-                    _medication_support_event_type(status),
+                    decision["event_type"],
                     worker_id,
                     task_id=task_id,
                     note=f"{status}: {notes}" if notes else status,
                 )
-                if status != "Completed":
+                if decision["alert"] is not None:
                     self._upsert_alert(
                         cursor,
                         visit_id,
-                        _medication_support_alert(status, notes),
+                        decision["alert"],
                         event_id,
                     )
                 else:
@@ -398,22 +513,29 @@ class VisitRepository:
                         """
                         update c3a_app_risk_alerts
                         set status = 'resolved',
+                            resolved_at = now(),
+                            resolved_by_worker_id = null,
                             updated_at = now()
                         where visit_id = %s
-                          and alert_key = 'medication-support-follow-up'
+                          and alert_key = %s
+                          and status in ('active', 'acknowledged')
                         """,
-                        (visit_id,),
+                        (visit_id, MEDICATION_SUPPORT_ALERT_KEY),
                     )
                 return self._get_scenario(cursor, visit_id)
 
     def complete_visit(self, visit_id: str, worker_id: str | None, snapshot: dict[str, Any] | None) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                self._visit_row_for_update(cursor, visit_id)
+                visit = self._visit_row_for_update(cursor, visit_id)
+                self._assert_visit_access(cursor, visit_id, worker_id)
+                self._monitor_checklist_task_risks(cursor, visit_id)
+                snapshot = _derive_location_snapshot(snapshot, visit, "check_out") if snapshot else None
                 snapshot_id = self._upsert_location_snapshot(cursor, visit_id, snapshot) if snapshot else None
                 if snapshot_id:
-                    event_type = _location_event_type(snapshot, False)
-                    self._insert_event(cursor, visit_id, event_type, worker_id, location_snapshot_id=snapshot_id, note=snapshot.get("note"))
+                    event_type = location_event_type(snapshot, is_check_in=False)
+                    event_id = self._insert_event(cursor, visit_id, event_type, worker_id, location_snapshot_id=snapshot_id, note=snapshot.get("note"))
+                    self._sync_location_alert(cursor, visit_id, snapshot, event_id)
                 cursor.execute(
                     """
                     update c3a_app_care_tasks
@@ -480,6 +602,7 @@ class VisitRepository:
         ]
 
     def _get_scenario(self, cursor, visit_id: str) -> dict[str, Any]:
+        self._monitor_checklist_task_risks(cursor, visit_id)
         cursor.execute(
             """
             with visit_row as (
@@ -508,9 +631,9 @@ class VisitRepository:
                 select a.*
                 from c3a_app_risk_alerts a
                 where a.visit_id = %s
-                  and a.status = 'active'
-                order by case a.level when 'high' then 0 when 'moderate' then 1 else 2 end,
-                         a.created_at
+                order by case a.status when 'active' then 0 when 'acknowledged' then 1 else 2 end,
+                         case a.level when 'high' then 0 when 'moderate' then 1 else 2 end,
+                         a.updated_at desc
             ),
             snapshot_rows as (
                 select ls.*
@@ -633,10 +756,26 @@ class VisitRepository:
                            select jsonb_agg(
                                jsonb_build_object(
                                    'id', a.id::text,
+                                   'alertKey', a.alert_key,
+                                   'riskType', coalesce(a.payload->>'risk_type', a.alert_key),
                                    'level', a.level,
                                    'title', a.title,
                                    'message', a.message,
-                                   'source', a.source
+                                   'source', a.source,
+                                   'status', a.status,
+                                   'visitId', a.visit_id::text,
+                                   'assignedWorkerId', v.worker_id,
+                                   'generatedFromEventId', a.generated_from_event_id::text,
+                                   'details', a.payload,
+                                   'createdAt', to_jsonb(a.created_at),
+                                   'updatedAt', to_jsonb(a.updated_at),
+                                   'acknowledgedAt', to_jsonb(a.acknowledged_at),
+                                   'acknowledgedByWorkerId', a.acknowledged_by_worker_id,
+                                   'resolvedAt', to_jsonb(a.resolved_at),
+                                   'resolvedByWorkerId', a.resolved_by_worker_id,
+                                   'dismissedAt', to_jsonb(a.dismissed_at),
+                                   'dismissedByWorkerId', a.dismissed_by_worker_id,
+                                   'reviewNote', a.review_note
                                )
                            )
                            from alert_rows a
@@ -1000,11 +1139,16 @@ class VisitRepository:
     def _alerts(self, cursor, visit_id: str) -> list[dict[str, Any]]:
         cursor.execute(
             """
-            select id::text, level, title, message, source
+            select id::text, alert_key, level, title, message, source, status,
+                   generated_from_event_id::text, payload, created_at, updated_at,
+                   acknowledged_at, acknowledged_by_worker_id,
+                   resolved_at, resolved_by_worker_id,
+                   dismissed_at, dismissed_by_worker_id, review_note
             from c3a_app_risk_alerts
             where visit_id = %s
-              and status = 'active'
-            order by case level when 'high' then 0 when 'moderate' then 1 else 2 end, created_at
+            order by case status when 'active' then 0 when 'acknowledged' then 1 else 2 end,
+                     case level when 'high' then 0 when 'moderate' then 1 else 2 end,
+                     updated_at desc
             """,
             (visit_id,),
         )
@@ -1095,7 +1239,7 @@ class VisitRepository:
             {
                 "visit_id": visit_id,
                 "type": snapshot["type"],
-                "recorded_at": snapshot.get("timestamp") or datetime.utcnow(),
+                "recorded_at": snapshot.get("timestamp") or datetime.now(timezone.utc),
                 "lat": coords.get("latitude"),
                 "lon": coords.get("longitude"),
                 "accuracy_meters": snapshot.get("accuracyMeters"),
@@ -1142,7 +1286,7 @@ class VisitRepository:
         )
         return cursor.fetchone() is not None
 
-    def _upsert_alert(self, cursor, visit_id: str, alert: dict[str, Any], event_id: str) -> None:
+    def _upsert_alert(self, cursor, visit_id: str, alert: dict[str, Any], event_id: str | None) -> None:
         cursor.execute(
             """
             insert into c3a_app_risk_alerts (
@@ -1162,7 +1306,46 @@ class VisitRepository:
                 title = excluded.title,
                 message = excluded.message,
                 source = excluded.source,
-                status = 'active',
+                status = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.status
+                    else 'active'
+                end,
+                acknowledged_at = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.acknowledged_at
+                    else null
+                end,
+                acknowledged_by_worker_id = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.acknowledged_by_worker_id
+                    else null
+                end,
+                resolved_at = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.resolved_at
+                    else null
+                end,
+                resolved_by_worker_id = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.resolved_by_worker_id
+                    else null
+                end,
+                dismissed_at = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.dismissed_at
+                    else null
+                end,
+                dismissed_by_worker_id = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.dismissed_by_worker_id
+                    else null
+                end,
+                review_note = case
+                    when c3a_app_risk_alerts.payload = excluded.payload
+                        then c3a_app_risk_alerts.review_note
+                    else null
+                end,
                 generated_from_event_id = excluded.generated_from_event_id,
                 payload = excluded.payload,
                 updated_at = now()
@@ -1176,6 +1359,92 @@ class VisitRepository:
                 event_id,
                 json.dumps(alert.get("payload", {})),
             ),
+        )
+
+    def _sync_location_alert(
+        self,
+        cursor,
+        visit_id: str,
+        snapshot: dict[str, Any],
+        event_id: str | None,
+    ) -> None:
+        alert = location_alert(snapshot)
+        if alert:
+            self._upsert_alert(cursor, visit_id, alert, event_id)
+            return
+        if snapshot.get("withinExpectedArea") is True:
+            cursor.execute(
+                """
+                update c3a_app_risk_alerts
+                set status = 'resolved',
+                    resolved_at = now(),
+                    resolved_by_worker_id = null,
+                    updated_at = now()
+                where visit_id = %s
+                  and alert_key = %s
+                  and status in ('active', 'acknowledged')
+                """,
+                (visit_id, LOCATION_ALERT_KEY),
+            )
+
+    def _assert_visit_access(
+        self,
+        cursor,
+        visit_id: str,
+        worker_id: str | None,
+        requested_role: str | None = None,
+    ) -> None:
+        if not worker_id:
+            raise VisitValidationError("workerId is required for visit access")
+        cursor.execute(
+            """
+            select w.role, w.active, v.worker_id as assigned_worker_id
+            from c3a_app_workers w
+            cross join c3a_app_visits v
+            where w.id = %s and v.id = %s
+            """,
+            (worker_id, visit_id),
+        )
+        access = cursor.fetchone()
+        if not access:
+            raise VisitNotFoundError("Worker or visit was not found")
+        if not access["active"] or (requested_role and access["role"] != requested_role):
+            raise VisitAccessError("Worker role is invalid or inactive")
+        if access["role"] != "supervisor" and access["assigned_worker_id"] != worker_id:
+            raise VisitAccessError("Worker is not assigned to this visit")
+
+    def _monitor_checklist_task_risks(self, cursor, visit_id: str) -> None:
+        cursor.execute(
+            """
+            select id::text, label, type, status, due_at
+            from c3a_app_care_tasks
+            where visit_id = %s
+            order by sort_order, due_at
+            """,
+            (visit_id,),
+        )
+        tasks = cursor.fetchall()
+        active_alert_keys: list[str] = []
+        for task in tasks:
+            alert = evaluate_checklist_task(task)
+            if alert is None:
+                continue
+            active_alert_keys.append(alert["alert_key"])
+            self._upsert_alert(cursor, visit_id, alert, None)
+
+        cursor.execute(
+            """
+            update c3a_app_risk_alerts
+            set status = 'resolved',
+                resolved_at = now(),
+                resolved_by_worker_id = null,
+                updated_at = now()
+            where visit_id = %s
+              and alert_key like %s
+              and status in ('active', 'acknowledged')
+              and not (alert_key = any(%s))
+            """,
+            (visit_id, f"{CHECKLIST_ALERT_KEY_PREFIX}%", active_alert_keys),
         )
 
 
@@ -1207,39 +1476,25 @@ def _issue_mapping(task: dict[str, Any], issue_type: str):
             },
         )
     if task["type"] == "medication":
-        medication_mapping = {
-            "medication_delayed": (
-                "medication_delayed", "delayed", "delayed", "incident_active",
-                "Medication support is delayed", "Document the delay, do not double doses, and seek nurse or supervisor advice.", "high",
-            ),
-            "medication_unavailable": (
-                "medication_unavailable", "issue", "delayed", "incident_active",
-                "Medication is unavailable", "Record that the medication was unavailable and contact the appropriate supervisor or nurse.", "high",
-            ),
-            "medication_unable_to_confirm": (
-                "medication_unable_to_confirm", "issue", "follow_up_required", "review",
-                "Medication support could not be confirmed", "Do not assume the medication was taken. Document the uncertainty and arrange follow-up.", "moderate",
-            ),
-            "patient_declined": (
-                "medication_declined", "skipped", "follow_up_required", "review",
-                "Patient declined medication support", "Record the refusal and reason, then arrange follow-up according to the care plan.", "moderate",
-            ),
-        }
-        event_type, task_status, visit_status, lifecycle, title, message, level = medication_mapping.get(
-            issue_type,
-            medication_mapping["medication_delayed"],
+        support_status, task_status = {
+            "medication_delayed": ("Delayed", "delayed"),
+            "medication_unavailable": ("Unavailable", "issue"),
+            "medication_unable_to_confirm": ("Unable to Confirm", "issue"),
+            "patient_declined": ("Declined", "skipped"),
+        }.get(issue_type, ("Delayed", "delayed"))
+        decision = evaluate_medication_support(
+            support_status,
+            current_visit_status="in_progress",
+            current_lifecycle_step="care_tasks",
         )
+        alert = dict(decision["alert"])
+        alert["alert_key"] = f"{decision['event_type']}-{task['id']}"
         return (
-            event_type,
+            decision["event_type"],
             task_status,
-            visit_status,
-            lifecycle,
-            {
-                "alert_key": f"{event_type}-{task['id']}",
-                "level": level,
-                "title": title,
-                "message": message,
-            },
+            decision["visit_status"],
+            decision["lifecycle_step"],
+            alert,
         )
     return (
         "follow_up_required",
@@ -1263,36 +1518,6 @@ def _issue_note(task: dict[str, Any], issue_type: str) -> str:
     if issue_type.startswith("medication_"):
         return f"{task['label']}: {issue_type.replace('_', ' ')}"
     return f"{task['label']}: could not complete"
-
-
-def _medication_support_event_type(status: str) -> str:
-    if status == "Completed":
-        return "medication_given"
-    if status == "Delayed":
-        return "medication_delayed"
-    return "follow_up_required"
-
-
-def _medication_support_visit_state(status: str, current_status: str, current_lifecycle: str) -> tuple[str, str]:
-    if current_status == "completed":
-        return current_status, current_lifecycle
-    if status == "Completed":
-        if current_status in {"scheduled", "arrived", "delayed", "follow_up_required"}:
-            return "in_progress", "care_tasks"
-        return current_status, "care_tasks"
-    if status in {"Delayed", "Unable to Confirm"}:
-        return "delayed", "review"
-    return "follow_up_required", "review"
-
-
-def _medication_support_alert(status: str, notes: str) -> dict[str, str]:
-    level = "high" if status in {"Delayed", "Unable to Confirm"} else "moderate"
-    return {
-        "alert_key": "medication-support-follow-up",
-        "level": level,
-        "title": "Medication support needs follow-up",
-        "message": f"{status}: {notes}",
-    }
 
 
 def _normalise_medication_items(items: Any, medication_names: list[str]) -> list[dict[str, str]]:
@@ -1329,12 +1554,18 @@ def _normalise_medication_items(items: Any, medication_names: list[str]) -> list
     return result
 
 
-def _location_event_type(snapshot: dict[str, Any], is_check_in: bool) -> str:
-    if snapshot.get("permissionStatus") == "denied" or snapshot.get("source") == "manual_override":
-        return "location_permission_denied"
-    if snapshot.get("withinExpectedArea") is False:
-        return "location_out_of_range"
-    return "location_check_in" if is_check_in else "location_check_out"
+def _derive_location_snapshot(
+    snapshot: dict[str, Any],
+    visit: dict[str, Any],
+    snapshot_type: str,
+) -> dict[str, Any]:
+    return derive_location_snapshot(
+        snapshot,
+        snapshot_type=snapshot_type,
+        planned_latitude=visit.get("planned_lat"),
+        planned_longitude=visit.get("planned_lon"),
+        threshold_meters=visit.get("location_threshold_meters"),
+    )
 
 
 def _incident_checklist(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

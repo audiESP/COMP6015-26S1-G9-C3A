@@ -27,6 +27,8 @@ class FakeService:
         self.last_rag_context = None
         self.last_patient = None
         self.last_current_task = None
+        self.last_medication_support = None
+        self.last_risks = None
         self.last_messages = None
 
     def status(self):
@@ -36,6 +38,8 @@ class FakeService:
         self.last_rag_context = kwargs.get("rag_context")
         self.last_patient = kwargs.get("patient")
         self.last_current_task = kwargs.get("current_task")
+        self.last_medication_support = kwargs.get("medication_support")
+        self.last_risks = kwargs.get("risks")
         self.last_messages = kwargs.get("messages")
         return self.last_rag_context or "direct reply"
 
@@ -43,6 +47,8 @@ class FakeService:
         self.last_rag_context = kwargs.get("rag_context")
         self.last_patient = kwargs.get("patient")
         self.last_current_task = kwargs.get("current_task")
+        self.last_medication_support = kwargs.get("medication_support")
+        self.last_risks = kwargs.get("risks")
         self.last_messages = kwargs.get("messages")
         yield "Safe "
         yield "response."
@@ -163,6 +169,10 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertEqual(self.db.calls, 1)
         self.assertEqual(self.rag.calls, 0)
         self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "database_only")
+        self.assertEqual(
+            [item["kind"] for item in response.json()["sourceReferences"]],
+            ["patient_record", "visit_context"],
+        )
 
     def test_rag_only_does_not_call_db(self):
         response = self.client.post(
@@ -177,6 +187,58 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertEqual(self.db.calls, 0)
         self.assertEqual(self.rag.calls, 1)
         self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "rag_only")
+        guideline = response.json()["sourceReferences"][0]
+        self.assertEqual(guideline["kind"], "guideline")
+        self.assertEqual(guideline["filename"], "care-guide.pdf")
+        self.assertEqual(guideline["pageStart"], 1)
+        self.assertEqual(guideline["section"], "Medication monitoring")
+
+    def test_medication_support_and_extended_risks_reach_generation(self):
+        payload = _chat_payload("What should I do next?")
+        payload["medicationSupportContext"] = {
+            "id": "med-1",
+            "visitId": "visit-1",
+            "status": "partial",
+            "notes": "One item was not taken.",
+            "timestamp": "2026-09-03T09:10:00Z",
+            "hcwId": "worker-1",
+            "medicationNames": ["Metformin"],
+            "medicationItems": [
+                {"name": "Metformin", "takenStatus": "not_taken", "takenAt": None}
+            ],
+        }
+        payload["riskContext"] = [{
+            "id": "risk-1",
+            "alertKey": "medication:med-1",
+            "riskType": "medication_not_taken",
+            "level": "high",
+            "title": "Medication not taken",
+            "message": "Follow-up is required.",
+            "status": "acknowledged",
+            "details": {"medication": "Metformin"},
+            "reviewNote": "Supervisor notified",
+        }]
+
+        response = self.client.post("/ai/chat", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.service.last_medication_support.status, "partial")
+        self.assertEqual(self.service.last_medication_support.medicationNames, ["Metformin"])
+        self.assertEqual(self.service.last_risks[0].riskType, "medication_not_taken")
+        self.assertEqual(self.service.last_risks[0].status, "acknowledged")
+        self.assertEqual(self.service.last_risks[0].details["medication"], "Metformin")
+        self.assertEqual(self.service.last_risks[0].reviewNote, "Supervisor notified")
+        self.assertIn(
+            "visit_context",
+            [item["kind"] for item in response.json()["sourceReferences"]],
+        )
+
+    def test_direct_reply_identifies_general_knowledge(self):
+        response = self.client.post("/ai/chat", json=_chat_payload("Hello", patient=False))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["sourceReferences"][0]["kind"], "general_knowledge")
+        self.assertIn("fake", response.json()["sourceReferences"][0]["label"])
 
     def test_linked_patient_general_pathway_question_does_not_call_db(self):
         response = self.client.post(
@@ -311,6 +373,7 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertEqual("".join(event.get("content", "") for event in events), "Safe response.")
         self.assertTrue(events[-1]["appendSources"])
         self.assertEqual(len(events[-1]["sources"]), 1)
+        self.assertEqual(events[-1]["sourceReferences"][0]["kind"], "guideline")
         self.assertIsNone(self.service.last_patient)
 
     def test_uncertain_resolves_to_hybrid_when_both_sources_have_quality(self):

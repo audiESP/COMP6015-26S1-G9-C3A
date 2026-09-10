@@ -219,6 +219,7 @@ class OllamaService:
         visit=None,
         current_task=None,
         tasks=None,
+        medication_support=None,
         events=None,
         risks=None,
         checklist=None,
@@ -235,6 +236,7 @@ class OllamaService:
                 visit=visit,
                 current_task=current_task,
                 tasks=tasks,
+                medication_support=medication_support,
                 events=events,
                 risks=risks,
                 checklist=checklist,
@@ -257,6 +259,7 @@ class OllamaService:
         visit=None,
         current_task=None,
         tasks=None,
+        medication_support=None,
         events=None,
         risks=None,
         checklist=None,
@@ -282,6 +285,7 @@ class OllamaService:
             visit=visit,
             current_task=current_task,
             tasks=tasks or [],
+            medication_support=medication_support,
             events=events or [],
             risks=risks or [],
             checklist=checklist or [],
@@ -347,6 +351,7 @@ def _build_ollama_messages(
     visit=None,
     current_task=None,
     tasks=None,
+    medication_support=None,
     events=None,
     risks=None,
     checklist=None,
@@ -371,6 +376,7 @@ def _build_ollama_messages(
         visit=visit,
         current_task=current_task,
         tasks=tasks or [],
+        medication_support=medication_support,
         events=events or [],
         risks=risks or [],
         checklist=checklist or [],
@@ -469,6 +475,7 @@ def _build_workflow_context(
     visit=None,
     current_task=None,
     tasks=None,
+    medication_support=None,
     events=None,
     risks=None,
     checklist=None,
@@ -543,6 +550,28 @@ def _build_workflow_context(
             if detail:
                 line += f"; {detail}"
             parts.append(line)
+    if medication_support:
+        parts.append("## Medication Support Record")
+        for label, attribute in [
+            ("Status", "status"),
+            ("Recorded at", "timestamp"),
+            ("Notes", "notes"),
+            ("Recorded by worker ID", "hcwId"),
+        ]:
+            value = getattr(medication_support, attribute, None)
+            if value:
+                parts.append(f"- {label}: {value}")
+        names = getattr(medication_support, "medicationNames", None) or []
+        if names:
+            parts.append(f"- Medications: {', '.join(str(name) for name in names)}")
+        for item in (getattr(medication_support, "medicationItems", None) or [])[:12]:
+            name = _context_value(item, "name") or _context_value(item, "medicationName") or "Medication"
+            status = _context_value(item, "takenStatus") or _context_value(item, "status") or "not recorded"
+            line = f"- {name}: {status}"
+            taken_at = _context_value(item, "takenAt")
+            if taken_at:
+                line += f" at {taken_at}"
+            parts.append(line)
     if checklist:
         parts.append("## Incident Checklist")
         for item in checklist[:12]:
@@ -567,8 +596,27 @@ def _build_workflow_context(
             title = getattr(risk, "title", None) or getattr(risk, "id", "Risk")
             level = getattr(risk, "level", "unknown")
             message = getattr(risk, "message", "")
-            parts.append(f"- {level.upper()}: {title}. {message}")
+            line = f"- {str(level).upper()}: {title}. {message}"
+            risk_type = getattr(risk, "riskType", None)
+            status = getattr(risk, "status", None)
+            details = getattr(risk, "details", None)
+            review_note = getattr(risk, "reviewNote", None)
+            if risk_type:
+                line += f"; type: {risk_type}"
+            if status:
+                line += f"; status: {status}"
+            if details:
+                line += f"; details: {json.dumps(details, ensure_ascii=True, sort_keys=True)}"
+            if review_note:
+                line += f"; review note: {review_note}"
+            parts.append(line)
     return "\n".join(parts)
+
+
+def _context_value(item, key: str):
+    if isinstance(item, dict):
+        return item.get(key)
+    return getattr(item, key, None)
 
 
 def _build_rag_context(rag_context) -> str:
