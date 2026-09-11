@@ -23,11 +23,11 @@ cp c3a-core-ai/.env.example c3a-core-ai/.env
 
 Set `QDRANT_URL` and `QDRANT_API_KEY` in `c3a-core-ai/.env`.
 
-The AI layer calls a local Ollama instance and uses `llama3:latest` by default.
+The AI layer calls a local Ollama instance and uses `llama3.1:8b` by default.
 Install and start the model before launching the AI service:
 
 ```bash
-ollama pull llama3
+ollama pull llama3.1:8b
 ollama serve
 ```
 
@@ -78,3 +78,43 @@ npx expo start
 
 The frontend calls `EXPO_PUBLIC_API_BASE_URL`, which defaults to
 `http://127.0.0.1:8000`.
+
+## Training resources
+
+Training topics and materials are stored in PostgreSQL. Apply migrations
+`005` through `010` in order when setting up a new training catalogue. For an
+existing catalogue through `008`, apply `009` and `010` together in a transaction
+before starting the updated API. If `009` is already applied, apply only
+`c3a-core-api/migrations/010_training_resources_in_existing_materials.sql`.
+Do not replay the earlier catalogue-reset migrations on an existing database.
+Migration `010` restores the original CPR file and excerpt replaced by `009`,
+then groups related resources on the original CPR, falls, manual handling and
+hand hygiene pages. It can be reapplied without duplicating resources.
+
+Original materials keep their IDs, titles, excerpts, sources, file URLs and
+reading times. Each of the four supplemented pages has one new summary paragraph
+introducing its original material and additional resources together.
+The additional `resource_links` JSON array is returned as `resourceLinks` by
+both the topic-materials and search endpoints. Each link has `title`, `url`,
+`language` (BCP 47) and `type` (`pdf` or `link`). Related PDFs, official resource
+pages and translations appear together on one material detail page. Link titles
+use the document's language, and native-language titles are searchable. The
+pressure injury material contains all nine supplied language versions.
+
+New entries use descriptive summaries and links to the original publications.
+Their `body` is empty, so summaries are not labelled as verbatim quotations.
+Original source buttons remain visible alongside a separate resource section.
+When a new material already lists its source URL as a resource, the same link is
+not repeated. The five new pages cover mealtimes, worker resources, the Code of
+Conduct and the grouped pressure injury translations.
+
+To verify the migration and API against PostgreSQL, run from `c3a-core-api` in
+PowerShell:
+
+```powershell
+$env:RUN_POSTGRES_INTEGRATION_TESTS = '1'
+python -m unittest discover -s tests -p test_training_resources.py -v
+```
+
+These checks use a separate schema inside a rolled-back transaction and leave
+the application catalogue untouched.

@@ -109,6 +109,7 @@ export const TrainingScreen: React.FC<Props> = ({ onClose }) => {
   );
 
   const openMaterial = useCallback((topic: TrainingTopic, material: TrainingMaterial) => {
+    setError(null);
     setView({ screen: 'material', topic, material });
   }, []);
 
@@ -119,14 +120,15 @@ export const TrainingScreen: React.FC<Props> = ({ onClose }) => {
       title: result.topicTitle,
       materialCount: 0,
     };
+    setError(null);
     setSearchQuery('');
     setView({ screen: 'material', topic, material: result });
   }, []);
 
-  const openSource = useCallback((material: TrainingMaterial) => {
-    const target = material.sourceUrl ?? material.url;
-    if (target) Linking.openURL(target).catch(() => undefined);
-  }, []);
+  const openResource = useCallback((url: string) => {
+    setError(null);
+    Linking.openURL(url).catch(() => setError(t('training.openError')));
+  }, [t]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -144,7 +146,7 @@ export const TrainingScreen: React.FC<Props> = ({ onClose }) => {
             } else if (view.screen === 'materials') {
               setView({ screen: 'topics' });
             } else {
-              setView({ screen: 'materials', topic: view.topic });
+              openTopic(view.topic);
             }
           }}
           activeOpacity={0.75}
@@ -243,16 +245,25 @@ export const TrainingScreen: React.FC<Props> = ({ onClose }) => {
         {view.screen === 'material' && (
           <View style={styles.card}>
             {!!view.material.summary && <Text style={styles.cardSubtitle}>{view.material.summary}</Text>}
-            {!!view.material.body && <Text style={styles.excerptLabel}>{t('training.excerptLabel')}</Text>}
-            <Text style={styles.bodyText}>{view.material.body}</Text>
-            {(view.material.sourceName || view.material.sourceUrl) && (
+            {!!view.material.body && (
+              <>
+                <Text style={styles.excerptLabel}>{t('training.excerptLabel')}</Text>
+                <Text style={styles.bodyText}>{view.material.body}</Text>
+              </>
+            )}
+            {(view.material.sourceName || view.material.sourceUrl || view.material.url) && (
               <View style={styles.sourceBlock}>
                 <Text style={styles.sourceLabel}>{t('training.source')}</Text>
                 {!!view.material.sourceName && (
                   <Text style={styles.sourceName}>{view.material.sourceName}</Text>
                 )}
-                {!!(view.material.sourceUrl ?? view.material.url) && (
-                  <TouchableOpacity onPress={() => openSource(view.material)} activeOpacity={0.75}>
+                {!!(view.material.sourceUrl ?? view.material.url) &&
+                  !view.material.resourceLinks?.some((resource) => resource.url === (view.material.sourceUrl ?? view.material.url)) && (
+                  <TouchableOpacity
+                    onPress={() => openResource((view.material.sourceUrl ?? view.material.url)!)}
+                    accessibilityRole="link"
+                    activeOpacity={0.75}
+                  >
                     <Text style={styles.sourceLink}>
                       {typeLabels[view.material.type] === 'PDF'
                         ? t('training.openPdf')
@@ -260,6 +271,31 @@ export const TrainingScreen: React.FC<Props> = ({ onClose }) => {
                     </Text>
                   </TouchableOpacity>
                 )}
+              </View>
+            )}
+            {!!view.material.resourceLinks?.length && (
+              <View style={styles.sourceBlock}>
+                <Text style={styles.sourceLabel}>{t('training.resources')}</Text>
+                <View style={styles.resourceList}>
+                  {view.material.resourceLinks.map((resource) => (
+                    <TouchableOpacity
+                      key={resource.url}
+                      style={styles.resourceButton}
+                      onPress={() => openResource(resource.url)}
+                      accessibilityRole="link"
+                      accessibilityLabel={resource.title}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[
+                        styles.resourceTitle,
+                        resource.language === 'ar' && styles.resourceTitleRtl,
+                      ]}>
+                        {resource.title}
+                      </Text>
+                      <Text style={styles.resourceType}>{typeLabels[resource.type]}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
             )}
           </View>
@@ -331,6 +367,17 @@ const styles = StyleSheet.create({
   sourceLabel: { color: '#60746B', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   sourceName: { color: '#3D4F49', fontSize: 13, marginTop: 4 },
   sourceLink: { color: '#2E6F73', fontSize: 14, fontWeight: '700', marginTop: 8 },
+  resourceList: { marginTop: 14, gap: 8 },
+  resourceButton: {
+    borderWidth: 1,
+    borderColor: '#D9E2DE',
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#F7FAF8',
+  },
+  resourceTitle: { color: '#2E6F73', fontSize: 14, fontWeight: '700', lineHeight: 22 },
+  resourceTitleRtl: { writingDirection: 'rtl', textAlign: 'right' },
+  resourceType: { color: '#60746B', fontSize: 11, marginTop: 4 },
   loadingText: { color: '#60746B', fontSize: 13, marginBottom: 10 },
   emptyText: { color: '#60746B', fontSize: 13 },
   errorBanner: {

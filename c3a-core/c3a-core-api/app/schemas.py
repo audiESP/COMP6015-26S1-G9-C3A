@@ -375,6 +375,13 @@ class TrainingTopic(BaseModel):
     materialCount: int = 0
 
 
+class TrainingResourceLink(BaseModel):
+    title: str
+    url: str
+    language: str
+    type: Literal["pdf", "link"]
+
+
 class TrainingMaterial(BaseModel):
     id: str
     topicId: str
@@ -386,6 +393,7 @@ class TrainingMaterial(BaseModel):
     sourceName: Optional[str] = None
     sourceUrl: Optional[str] = None
     durationMinutes: Optional[int] = None
+    resourceLinks: list[TrainingResourceLink] = Field(default_factory=list)
 
 
 class TrainingTopicsResponse(BaseModel):

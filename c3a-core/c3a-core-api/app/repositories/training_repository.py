@@ -81,7 +81,7 @@ class TrainingRepository:
                 cursor.execute(
                     """
                     select id, topic_id, title, type, summary, body, url,
-                           source_name, source_url, duration_minutes
+                           source_name, source_url, duration_minutes, resource_links
                     from c3a_app_training_materials
                     where topic_id = %s
                     order by sort_order, title
@@ -110,6 +110,7 @@ class TrainingRepository:
                     "sourceName": material["source_name"],
                     "sourceUrl": material["source_url"],
                     "durationMinutes": material["duration_minutes"],
+                    "resourceLinks": material["resource_links"],
                 }
                 for material in materials
             ],
@@ -127,7 +128,7 @@ class TrainingRepository:
                     """
                     select
                         m.id, m.topic_id, m.title, m.type, m.summary, m.body, m.url,
-                        m.source_name, m.source_url, m.duration_minutes,
+                        m.source_name, m.source_url, m.duration_minutes, m.resource_links,
                         t.title as topic_title, t.slug as topic_slug
                     from c3a_app_training_materials m
                     join c3a_app_training_topics t on t.id = m.topic_id
@@ -136,6 +137,12 @@ class TrainingRepository:
                         or m.body ilike %(like)s
                         or m.source_name ilike %(like)s
                         or t.title ilike %(like)s
+                        or exists (
+                            select 1
+                            from jsonb_array_elements(m.resource_links) as resource
+                            where resource->>'title' ilike %(like)s
+                                or resource->>'language' ilike %(like)s
+                        )
                     order by t.sort_order, m.sort_order
                     """,
                     {"like": like},
@@ -154,6 +161,7 @@ class TrainingRepository:
                 "sourceName": row["source_name"],
                 "sourceUrl": row["source_url"],
                 "durationMinutes": row["duration_minutes"],
+                "resourceLinks": row["resource_links"],
                 "topicTitle": row["topic_title"],
                 "topicSlug": row["topic_slug"],
             }

@@ -366,6 +366,13 @@ export interface TrainingTopic {
   materialCount: number;
 }
 
+export interface TrainingResourceLink {
+  title: string;
+  url: string;
+  language: string;
+  type: 'pdf' | 'link';
+}
+
 export interface TrainingMaterial {
   id: string;
   topicId: string;
@@ -377,6 +384,7 @@ export interface TrainingMaterial {
   sourceName?: string;
   sourceUrl?: string;
   durationMinutes?: number;
+  resourceLinks?: TrainingResourceLink[];
 }
 
 export interface TrainingSearchResult extends TrainingMaterial {

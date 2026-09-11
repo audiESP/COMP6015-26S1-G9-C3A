@@ -49,6 +49,8 @@
     "excerptLabel": "关键摘录（原文引用）",
     "source": "来源",
     "openPdf": "打开来源 PDF",
-    "openLink": "打开来源链接"
+    "openLink": "打开来源链接",
+    "resources": "文件与资源",
+    "openError": "无法打开此资料，请重试。"
   }
 }

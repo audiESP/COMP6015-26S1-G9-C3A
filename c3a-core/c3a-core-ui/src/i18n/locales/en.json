@@ -50,6 +50,8 @@
     "excerptLabel": "Key excerpt (quoted verbatim)",
     "source": "Source",
     "openPdf": "Open source PDF",
-    "openLink": "Open source link"
+    "openLink": "Open source link",
+    "resources": "Files and resources",
+    "openError": "Unable to open this resource. Please try again."
   }
 }
