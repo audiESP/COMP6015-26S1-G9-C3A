@@ -290,7 +290,7 @@ def complete_task(visit_id: str, task_id: str, req: Optional[TaskStatusRequest] 
 def update_task(visit_id: str, task_id: str, req: TaskStatusRequest):
     try:
         return ScenarioResponse.model_validate(
-            visit_repository.update_task_status(visit_id, task_id, req.status, req.workerId)
+            visit_repository.update_task_status(visit_id, task_id, req.status, req.workerId, **({"note": req.note} if req.note is not None else {}))
         )
     except Exception as exc:
         raise _visit_error(exc) from exc
@@ -300,7 +300,7 @@ def update_task(visit_id: str, task_id: str, req: TaskStatusRequest):
 def report_task_issue(visit_id: str, task_id: str, req: TaskIssueRequest):
     try:
         return ScenarioResponse.model_validate(
-            visit_repository.report_task_issue(visit_id, task_id, req.type, req.workerId)
+            visit_repository.report_task_issue(visit_id, task_id, req.type, req.workerId, **({"note": req.note} if req.note is not None else {}))
         )
     except Exception as exc:
         raise _visit_error(exc) from exc
@@ -338,7 +338,7 @@ def complete_visit(visit_id: str, req: CompleteVisitRequest):
     try:
         snapshot = req.checkOut.model_dump(exclude_none=True) if req.checkOut else None
         return ScenarioResponse.model_validate(
-            visit_repository.complete_visit(visit_id, req.workerId, snapshot)
+            visit_repository.complete_visit(visit_id, req.workerId, snapshot, **({"report": req.report} if req.report is not None else {}))
         )
     except Exception as exc:
         raise _visit_error(exc) from exc
