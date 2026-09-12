@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Speech from 'expo-speech';
+import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -21,7 +23,7 @@ import { HistorySidebar } from '../components/HistorySidebar';
 import { PatientModal } from '../components/PatientModal';
 import { useChat } from '../hooks/useChat';
 import '../i18n';
-import { analyseRiskNote, fetchPatientSummary, generateVisitReport, setApiBaseUrl, translateText } from '../services/api';
+import { analyseRiskNote, fetchPatientSummary, generateVisitReport, setApiBaseUrl, transcribeSpeech, translateText } from '../services/api';
 import type { PatientSummaryRecord } from '../services/api';
 import { useChatStore } from '../store/chatStore';
 import { useScenarioStore } from '../store/scenarioStore';
@@ -601,6 +603,7 @@ export const VisitScreen: React.FC<Props> = ({ apiBaseUrl, onOpenTraining }) => 
             <TranslationTab
               patientLanguage={scenario.patient.preferredLanguage ?? 'the patient preferred language'}
               workerLanguage="English"
+              visitId={scenario.visit.id}
             />
           )}
 
@@ -1430,24 +1433,63 @@ function AssistantTab({
 }
 
 type TranslationDirection = 'hcw_to_patient' | 'patient_to_hcw';
+type VoiceStatus = 'idle' | 'recording' | 'reviewing' | 'translating' | 'speaking' | 'paused' | 'error';
+
+// Keep this map deliberately small and explicit. We should never silently read a
+// translation in an unrelated device voice when a patient's language is unknown.
+const ttsLocales: Record<string, string> = {
+  'english': 'en-AU',
+  'english (australia)': 'en-AU',
+  'mandarin': 'zh-CN',
+  'mandarin chinese': 'zh-CN',
+  'cantonese': 'yue-HK',
+  'vietnamese': 'vi-VN',
+  'arabic': 'ar-SA',
+};
+
+function localeForLanguage(language: string): string | null {
+  return ttsLocales[language.trim().toLowerCase()] ?? null;
+}
+
+function isCompatibleVoice(voiceLanguage: string, locale: string): boolean {
+  const normalisedVoiceLanguage = voiceLanguage.replace('_', '-').toLowerCase();
+  const normalisedLocale = locale.toLowerCase();
+  return (
+    normalisedVoiceLanguage === normalisedLocale ||
+    normalisedVoiceLanguage.split('-')[0] === normalisedLocale.split('-')[0]
+  );
+}
 
 function TranslationTab({
   patientLanguage,
   workerLanguage,
+  visitId,
 }: {
   patientLanguage: string;
   workerLanguage: string;
+  visitId?: string;
 }) {
   const [direction, setDirection] = useState<TranslationDirection>('hcw_to_patient');
   const [inputText, setInputText] = useState('');
   const [result, setResult] = useState<TranslationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle');
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const speechPressActive = useRef(false);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const requestSeq = useRef(0);
   const lastRequestedKey = useRef('');
+  // expo-speech exposes stop rather than a native pause API. Its boundary events
+  // let us resume from the word currently being spoken instead of replaying the
+  // entire translation after a pause.
+  const speechOffset = useRef(0);
+  const speechPaused = useRef(false);
 
   const targetLanguage = direction === 'hcw_to_patient' ? patientLanguage : workerLanguage;
   const sourceLabel = direction === 'hcw_to_patient' ? workerLanguage : patientLanguage;
+  const speakerLabel = direction === 'hcw_to_patient' ? 'Care worker speaks' : 'Patient speaks';
+  const ttsLocale = localeForLanguage(targetLanguage);
   const commonPhrases = [
     'I am here for your scheduled care visit.',
     'Do you have any pain or discomfort today?',
@@ -1471,19 +1513,23 @@ function TranslationTab({
       const seq = requestSeq.current + 1;
       requestSeq.current = seq;
       setIsTranslating(true);
+      setVoiceStatus('translating');
       setError(null);
 
       try {
         const response = await translateText({
           text: cleanText,
+          sourceLanguage: sourceLabel,
           targetLanguage,
         });
         if (requestSeq.current === seq) {
           setResult(response);
+          setVoiceStatus('idle');
         }
       } catch (err) {
         if (requestSeq.current === seq) {
           setError(err instanceof Error ? err.message : 'Translation failed.');
+          setVoiceStatus('reviewing');
         }
       } finally {
         if (requestSeq.current === seq) {
@@ -1494,33 +1540,166 @@ function TranslationTab({
     [inputText, targetLanguage],
   );
 
-  useEffect(() => {
+  useEffect(() => () => {
+    speechPaused.current = false;
+    void Speech.stop();
+  }, []);
+
+  const invalidateTranslation = useCallback(() => {
     requestSeq.current += 1;
     lastRequestedKey.current = '';
-    setResult(null);
-    setError(null);
-    if (!inputText.trim()) {
-      setIsTranslating(false);
-      return;
-    }
-    const timer = setTimeout(() => {
-      requestTranslation(inputText);
-    }, 700);
-    return () => clearTimeout(timer);
-  }, [direction, inputText, requestTranslation]);
-
-  const handlePhrase = (phrase: string) => {
-    setDirection('hcw_to_patient');
-    setInputText(phrase);
-  };
-
-  const handleClear = () => {
-    requestSeq.current += 1;
-    lastRequestedKey.current = '';
-    setInputText('');
     setResult(null);
     setError(null);
     setIsTranslating(false);
+  }, []);
+
+  const handleDirectionChange = (nextDirection: TranslationDirection) => {
+    if (nextDirection === direction) return;
+    void Speech.stop();
+    speechPressActive.current = false;
+    if (recorder.isRecording) {
+      void recorder.stop().catch(() => undefined).then(() => setAudioModeAsync({ allowsRecording: false }));
+    }
+    invalidateTranslation();
+    setInputText('');
+    setVoiceStatus('idle');
+    setVoiceNotice(null);
+    setDirection(nextDirection);
+  };
+
+  const handleInputChange = (nextText: string) => {
+    invalidateTranslation();
+    setInputText(nextText);
+    setVoiceStatus(nextText.trim() ? 'reviewing' : 'idle');
+    setVoiceNotice(null);
+  };
+
+  const handlePhrase = (phrase: string) => {
+    if (direction !== 'hcw_to_patient') handleDirectionChange('hcw_to_patient');
+    handleInputChange(phrase);
+  };
+
+  const handleClear = () => {
+    void Speech.stop();
+    speechPressActive.current = false;
+    if (recorder.isRecording) {
+      void recorder.stop().catch(() => undefined).then(() => setAudioModeAsync({ allowsRecording: false }));
+    }
+    invalidateTranslation();
+    setInputText('');
+    setVoiceStatus('idle');
+    setVoiceNotice(null);
+  };
+
+  const handleSpeechUiPress = async () => {
+    if (isTranslating || recorder.isRecording) return;
+    speechPressActive.current = true;
+    try {
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) throw new Error('Microphone permission is required to transcribe speech.');
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      if (!speechPressActive.current) {
+        await setAudioModeAsync({ allowsRecording: false });
+        return;
+      }
+      recorder.record();
+      setVoiceStatus('recording');
+      setVoiceNotice('Recording… release to stop and transcribe.');
+    } catch (err) {
+      setVoiceStatus('error');
+      setVoiceNotice(err instanceof Error ? err.message : 'Unable to start recording.');
+    }
+  };
+
+  const handleSpeechUiRelease = async () => {
+    speechPressActive.current = false;
+    if (!recorder.isRecording) return;
+    try {
+      await recorder.stop();
+      await setAudioModeAsync({ allowsRecording: false });
+      const uri = recorder.uri;
+      if (!uri) throw new Error('Recording was unavailable.');
+      setVoiceStatus('translating');
+      setVoiceNotice('Transcribing speech…');
+      const response = await transcribeSpeech(uri, sourceLabel, direction === 'hcw_to_patient' ? 'care_worker' : 'patient', visitId);
+      invalidateTranslation();
+      setInputText(response.transcript);
+      setVoiceStatus('reviewing');
+      setVoiceNotice('Review or edit the transcript, then select Confirm & translate.');
+    } catch (err) {
+      setVoiceStatus('error');
+      setVoiceNotice(err instanceof Error ? err.message : 'Speech transcription failed. Please try again.');
+    }
+  };
+
+  const resetSpeechPosition = () => {
+    speechPaused.current = false;
+    speechOffset.current = 0;
+  };
+
+  const playTranslation = async (startOffset: number) => {
+    if (!result?.translatedText.trim()) return;
+    if (!ttsLocale) {
+      setVoiceStatus('error');
+      setVoiceNotice(`A compatible voice has not been configured for ${targetLanguage}. The translation remains available as text.`);
+      return;
+    }
+
+    try {
+      const voices = await Speech.getAvailableVoicesAsync();
+      const voice = voices.find((candidate) => isCompatibleVoice(candidate.language, ttsLocale));
+      if (!voice) {
+        setVoiceStatus('error');
+        setVoiceNotice(`No ${targetLanguage} voice is installed on this device. Install a compatible ${ttsLocale} voice to play the translation.`);
+        return;
+      }
+
+      await Speech.stop();
+      const text = result.translatedText;
+      const boundedStartOffset = Math.min(Math.max(startOffset, 0), text.length);
+      speechOffset.current = boundedStartOffset;
+      speechPaused.current = false;
+      setVoiceNotice(null);
+      Speech.speak(text.slice(boundedStartOffset), {
+        language: ttsLocale,
+        voice: voice.identifier,
+        rate: 0.9,
+        onStart: () => setVoiceStatus('speaking'),
+        onBoundary: ({ charIndex }: { charIndex: number }) => {
+          speechOffset.current = boundedStartOffset + charIndex;
+        },
+        onDone: () => {
+          speechPaused.current = false;
+          speechOffset.current = text.length;
+          setVoiceStatus('idle');
+        },
+        onStopped: () => setVoiceStatus(speechPaused.current ? 'paused' : 'idle'),
+        onError: () => {
+          speechPaused.current = false;
+          setVoiceStatus('error');
+          setVoiceNotice('The device could not play this translation. The translated text is still available to read.');
+        },
+      });
+    } catch {
+      setVoiceStatus('error');
+      setVoiceNotice('Unable to check voices installed on this device. The translated text is still available to read.');
+    }
+  };
+
+  const handlePause = () => {
+    speechPaused.current = true;
+    void Speech.stop();
+    setVoiceStatus('paused');
+  };
+
+  const handlePlay = () => {
+    void playTranslation(speechPaused.current ? speechOffset.current : 0);
+  };
+
+  const handleReplay = () => {
+    resetSpeechPosition();
+    void playTranslation(0);
   };
 
   return (
@@ -1534,7 +1713,7 @@ function TranslationTab({
         <View style={styles.directionRow}>
           <TouchableOpacity
             style={[styles.directionButton, direction === 'hcw_to_patient' && styles.directionButtonActive]}
-            onPress={() => setDirection('hcw_to_patient')}
+            onPress={() => handleDirectionChange('hcw_to_patient')}
             activeOpacity={0.75}
           >
             <Text style={[styles.directionText, direction === 'hcw_to_patient' && styles.directionTextActive]}>
@@ -1543,7 +1722,7 @@ function TranslationTab({
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.directionButton, direction === 'patient_to_hcw' && styles.directionButtonActive]}
-            onPress={() => setDirection('patient_to_hcw')}
+            onPress={() => handleDirectionChange('patient_to_hcw')}
             activeOpacity={0.75}
           >
             <Text style={[styles.directionText, direction === 'patient_to_hcw' && styles.directionTextActive]}>
@@ -1552,18 +1731,34 @@ function TranslationTab({
           </TouchableOpacity>
         </View>
 
+        <View style={styles.speechPanel}>
+          <Text style={styles.speechContext}>{speakerLabel} {sourceLabel} → {targetLanguage}</Text>
+          <Text style={styles.speechStatus}>{voiceStatus === 'recording' ? 'Recording' : voiceStatus === 'translating' ? 'Transcribing' : 'Speech-to-text'}</Text>
+          <TouchableOpacity
+            style={[styles.holdToSpeakButton, voiceStatus === 'recording' && styles.holdToSpeakButtonActive]}
+            onPressIn={handleSpeechUiPress}
+            onPressOut={handleSpeechUiRelease}
+            accessibilityLabel="Hold to speak"
+            accessibilityHint="Hold while speaking and release to transcribe"
+            activeOpacity={0.8}
+          >
+            <Text style={styles.holdToSpeakText}>{voiceStatus === 'recording' ? 'Release to transcribe' : 'Hold to speak'}</Text>
+          </TouchableOpacity>
+          <Text style={styles.speechHelper}>Hold while speaking. The transcript appears below for review before translation.</Text>
+        </View>
+
         <TextInput
           style={[styles.textInput, styles.translateInput]}
           value={inputText}
-          onChangeText={setInputText}
-          placeholder="Type or paste transcribed speech"
+          onChangeText={handleInputChange}
+          placeholder="Type or review transcribed speech"
           placeholderTextColor="#8A9B93"
           multiline
         />
 
         <View style={styles.quickActionBar}>
           <ActionButton
-            label={isTranslating ? 'Translating...' : 'Translate'}
+            label={isTranslating ? 'Translating...' : 'Confirm & translate'}
             onPress={() => {
               lastRequestedKey.current = '';
               requestTranslation(inputText);
@@ -1586,6 +1781,22 @@ function TranslationTab({
             <Text style={styles.translationText} selectable>
               {result?.translatedText ?? '...'}
             </Text>
+            {result && (
+              <View style={styles.quickActionBar}>
+                <ActionButton
+                  label={voiceStatus === 'speaking' ? 'Pause' : voiceStatus === 'paused' ? 'Resume' : 'Play'}
+                  onPress={voiceStatus === 'speaking' ? handlePause : handlePlay}
+                  disabled={voiceStatus === 'translating'}
+                />
+                <ActionButton label="Replay from start" tone="muted" onPress={handleReplay} disabled={voiceStatus === 'speaking'} />
+              </View>
+            )}
+          </View>
+        )}
+
+        {voiceNotice && (
+          <View style={styles.voiceNotice}>
+            <Text style={styles.voiceNoticeText}>{voiceNotice}</Text>
           </View>
         )}
 
@@ -2626,6 +2837,15 @@ const styles = StyleSheet.create({
   directionButtonActive: { backgroundColor: '#2E6F73' },
   directionText: { color: '#60746B', fontSize: 12, fontWeight: '900', textAlign: 'center' },
   directionTextActive: { color: '#FFFFFF' },
+  speechPanel: { backgroundColor: '#F0F8F7', borderRadius: 8, borderWidth: 1, borderColor: '#C8DDD6', padding: 12, gap: 7 },
+  speechContext: { color: '#244A4C', fontSize: 13, fontWeight: '900' },
+  speechStatus: { color: '#60746B', fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
+  holdToSpeakButton: { minHeight: 48, borderRadius: 8, backgroundColor: '#2E6F73', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  holdToSpeakButtonActive: { backgroundColor: '#A83B32' },
+  holdToSpeakText: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' },
+  speechHelper: { color: '#4F625A', fontSize: 12, lineHeight: 17 },
+  voiceNotice: { backgroundColor: '#FFF9E8', borderRadius: 8, borderWidth: 1, borderColor: '#E4C66A', padding: 10 },
+  voiceNoticeText: { color: '#765808', fontSize: 12, lineHeight: 17 },
   translationResult: {
     backgroundColor: '#F4F7F6',
     borderRadius: 8,

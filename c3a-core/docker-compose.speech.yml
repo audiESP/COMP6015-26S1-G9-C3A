@@ -1,0 +1,17 @@
+services:
+  c3a-speech:
+    build:
+      context: ./c3a-core-ai
+      dockerfile: Dockerfile.speech
+    image: c3a-local-speech:latest
+    container_name: c3a-local-speech
+    restart: unless-stopped
+    environment:
+      SPEECH_NUM_THREADS: "2"
+      SPEECH_MAX_DURATION_SECONDS: "20"
+      SPEECH_MAX_UPLOAD_BYTES: "10485760"
+    volumes:
+      - ${C3A_SPEECH_MODELS_DIR:?Set_C3A_SPEECH_MODELS_DIR_to_the_host_model_directory}:/models:ro
+    # Never expose this inference service to the LAN or public internet.
+    ports:
+      - "127.0.0.1:8002:8002"

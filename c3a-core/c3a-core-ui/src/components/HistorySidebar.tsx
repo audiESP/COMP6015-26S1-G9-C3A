@@ -65,7 +65,7 @@ export const HistorySidebar: React.FC<Props> = ({
   if (!visible) return null;
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {/* Backdrop */}
       <TouchableOpacity
         style={styles.backdrop}
@@ -157,7 +157,7 @@ export const HistorySidebar: React.FC<Props> = ({
 
 const styles = StyleSheet.create({
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.3)',
   },
   sidebar: {

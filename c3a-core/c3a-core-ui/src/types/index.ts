@@ -391,3 +391,12 @@ export interface TrainingSearchResult extends TrainingMaterial {
   topicTitle: string;
   topicSlug: string;
 }
+
+export interface SpeechTranscriptionResponse {
+  transcript: string;
+  sourceLanguage: string;
+  speakerRole: 'care_worker' | 'patient';
+  model: string;
+  requiresHumanReview: boolean;
+  audioRetained: boolean;
+}

@@ -19,7 +19,7 @@ from typing import Literal, Optional
 import uvicorn
 import psycopg
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -59,6 +59,7 @@ from app.schemas import (
     TrainingTopicsResponse,
     TranslationRequest,
     TranslationResponse,
+    SpeechTranscriptionResponse,
     UpdatePatientProfileRequest,
     UploadRequest,
     UploadResponse,
@@ -498,6 +499,34 @@ async def translate(req: TranslationRequest, request: Request):
         return TranslationResponse.model_validate(ai_response.model_dump())
     except AiServiceUnavailable as exc:
         raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
+
+
+@app.post("/speech/transcribe", response_model=SpeechTranscriptionResponse)
+async def transcribe_speech(
+    request: Request,
+    audio: UploadFile = File(...),
+    sourceLanguage: str = Form(...),
+    speakerRole: Literal["care_worker", "patient"] = Form(...),
+    visitId: str | None = Form(None),
+    clientRequestId: str | None = Form(None),
+):
+    max_bytes = int(os.getenv("SPEECH_MAX_UPLOAD_BYTES", "10485760"))
+    content_type = audio.content_type or ""
+    if not content_type.startswith("audio/"):
+        raise HTTPException(status_code=415, detail="Audio file is required")
+    data = await audio.read(max_bytes + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Audio recording must not be empty")
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Audio recording exceeds the upload limit")
+    request_id = clientRequestId or getattr(request.state, "request_id", None) or str(uuid.uuid4())
+    try:
+        result = await ai_client.transcribe_speech(data, audio.filename or "recording.m4a", content_type, sourceLanguage, speakerRole, request_id)
+    except AiServiceUnavailable as exc:
+        logger.warning("Speech transcription unavailable request_id=%s visit_id=%s error=%s", request_id, visitId, exc)
+        raise HTTPException(status_code=502, detail="Speech recognition service is unavailable") from exc
+    logger.info("Speech transcription complete request_id=%s visit_id=%s language=%s role=%s transcript_chars=%s", request_id, visitId, sourceLanguage, speakerRole, len(result.transcript))
+    return result
 
 
 @app.post("/upload", response_model=UploadResponse)

@@ -301,6 +301,15 @@ class TranslationResponse(BaseModel):
     translatedText: str
 
 
+class SpeechTranscriptionResponse(BaseModel):
+    transcript: str
+    sourceLanguage: str
+    speakerRole: Literal['care_worker', 'patient']
+    model: str
+    requiresHumanReview: bool = True
+    audioRetained: bool = False
+
+
 class PatientSummaryRecord(BaseModel):
     category: str
     table: str

@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.speech.txt ./
+RUN pip install --no-cache-dir -r requirements.speech.txt
+COPY speech ./speech
+COPY speech_server.py ./
+
+ENV SPEECH_ENABLED=true \
+    SPEECH_ASR_MODEL=/models/omnilingual-asr/model.int8.onnx \
+    SPEECH_ASR_TOKENS=/models/omnilingual-asr/tokens.txt \
+    SPEECH_VAD_MODEL=/models/silero-vad/silero_vad.onnx \
+    SPEECH_NUM_THREADS=2 \
+    SPEECH_MAX_DURATION_SECONDS=20 \
+    SPEECH_MAX_UPLOAD_BYTES=10485760 \
+    SPEECH_TARGET_SAMPLE_RATE=16000
+EXPOSE 8002
+CMD ["uvicorn", "speech_server:app", "--host", "0.0.0.0", "--port", "8002"]

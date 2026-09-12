@@ -2,6 +2,7 @@
 c3a-core-api/.env
 c3a-core-ai/.env
 c3a-core-ui/.env
+.expo/
 __pycache__/
 *.py[cod]
 .pytest_cache/

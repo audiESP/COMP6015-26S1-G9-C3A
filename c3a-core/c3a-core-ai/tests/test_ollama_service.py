@@ -118,7 +118,63 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([request.url.path for request in requests], ["/api/tags", "/api/chat"])
         payload = json.loads(requests[-1].content)
         self.assertFalse(payload["stream"])
+        self.assertEqual(
+            payload["format"]["required"],
+            ["sourceLanguage", "targetLanguage", "translatedText"],
+        )
         self.assertIn("Detect the source language", payload["messages"][1]["content"])
+
+    async def test_translate_text_treats_a_question_as_text_to_translate(self):
+        requests = []
+        service = None
+
+        def handler(request):
+            requests.append(request)
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "sourceLanguage": "English",
+                                "targetLanguage": "Chinese",
+                                "translatedText": "如何提高我的英语水平？",
+                            }
+                        )
+                    }
+                },
+            )
+
+        service = OllamaService(transport=httpx.MockTransport(handler))
+        result = await service.translate_text("How can I improve my English?", "Chinese", "English")
+
+        self.assertEqual(result["translatedText"], "如何提高我的英语水平？")
+        prompt = json.loads(requests[-1].content)["messages"][0]["content"]
+        self.assertIn("Never answer, explain, advise", prompt)
+        self.assertIn("rather than answering it", prompt)
+
+    async def test_translate_text_rejects_non_json_model_answer(self):
+        service = None
+
+        def handler(request):
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
+                )
+            return httpx.Response(
+                200,
+                json={"message": {"content": "Practice English every day."}},
+            )
+
+        service = OllamaService(transport=httpx.MockTransport(handler))
+        with self.assertRaisesRegex(OllamaServiceError, "invalid translation response"):
+            await service.translate_text("How can I improve my English?", "Chinese", "English")
 
     async def test_ollama_errors_are_explicit(self):
         def handler(request):

@@ -17,6 +17,7 @@ from .schemas import (
     RiskAnalysisRequest,
     RiskAnalysisResponse,
     TranslationRequest,
+    SpeechTranscriptionResponse,
 )
 
 
@@ -277,6 +278,22 @@ class AiClient:
                 exc,
                 exc_info=True,
             )
+            raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
+
+    async def transcribe_speech(self, audio: bytes, filename: str, content_type: str, source_language: str, speaker_role: str, client_request_id: str | None) -> SpeechTranscriptionResponse:
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/ai/speech/transcribe",
+                    files={"audio": (filename, audio, content_type)},
+                    data={"sourceLanguage": source_language, "speakerRole": speaker_role, "clientRequestId": client_request_id or ""},
+                    headers=_request_headers(client_request_id),
+                )
+                response.raise_for_status()
+                return SpeechTranscriptionResponse.model_validate(response.json())
+        except httpx.HTTPStatusError as exc:
+            raise AiServiceUnavailable(f"AI service returned HTTP {exc.response.status_code}") from exc
+        except Exception as exc:
             raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
 
 

@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import uvicorn
+import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -76,6 +77,8 @@ add_exception_handlers(
 service = OllamaService(enabled=AI_ENABLED)
 rag_retriever = RagRetriever()
 db_context_retriever = DbContextRetriever()
+SPEECH_SERVICE_URL = os.getenv("SPEECH_SERVICE_URL", "http://127.0.0.1:8002").rstrip("/")
+SPEECH_SERVICE_TIMEOUT_SECONDS = float(os.getenv("SPEECH_SERVICE_TIMEOUT_SECONDS", "120"))
 
 
 class ChatMessage(BaseModel):
@@ -253,6 +256,15 @@ class TranslationResponse(BaseModel):
     sourceLanguage: str
     targetLanguage: str
     translatedText: str
+
+
+class SpeechTranscriptionResponse(BaseModel):
+    transcript: str
+    sourceLanguage: str
+    speakerRole: Literal["care_worker", "patient"]
+    model: str
+    requiresHumanReview: bool = True
+    audioRetained: bool = False
 
 
 class RiskAnalysisRequest(BaseModel):
@@ -488,18 +500,72 @@ def _rag_payload(chunks, query: str = "") -> dict[str, Any]:
 @app.get("/ai/health")
 async def health():
     model_status = await service.check_health()
+    speech_status = await _speech_health()
     return {
         "status": "ok" if model_status["loaded"] else "degraded",
         "service": "c3a-core-ai",
         "model": model_status,
         "rag": rag_retriever.status(),
         "database_context": db_context_retriever.status(),
+        "speech": speech_status,
         "debug": {
             "debug_backend": os.getenv("DEBUG_BACKEND", "").lower() == "true",
             "ai_enabled": AI_ENABLED,
             "chat_uses_rag": CHAT_RAG_ENABLED,
         },
     }
+
+
+@app.post("/ai/speech/transcribe", response_model=SpeechTranscriptionResponse)
+async def transcribe_speech(
+    audio: UploadFile = File(...),
+    sourceLanguage: str = Form(...),
+    speakerRole: Literal["care_worker", "patient"] = Form(...),
+    clientRequestId: str | None = Form(None),
+):
+    if not sourceLanguage.strip():
+        raise HTTPException(status_code=400, detail="Source language must not be empty")
+    content_type = audio.content_type or ""
+    max_bytes = int(os.getenv("SPEECH_MAX_UPLOAD_BYTES", "10485760"))
+    data = await audio.read(max_bytes + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Audio recording must not be empty")
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Audio recording exceeds the upload limit")
+    started_at = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=SPEECH_SERVICE_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                f"{SPEECH_SERVICE_URL}/transcribe",
+                files={"audio": (audio.filename or "utterance.m4a", data, content_type)},
+                data={"sourceLanguage": sourceLanguage},
+            )
+            if response.status_code >= 400:
+                detail = response.json().get("detail", "Speech recognition failed")
+                raise HTTPException(status_code=response.status_code if response.status_code < 500 else 503, detail=detail)
+            payload = response.json()
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        logger.warning("Speech container unavailable request_id=%s error=%s", clientRequestId, exc)
+        raise HTTPException(status_code=503, detail="Speech recognition service is unavailable") from exc
+    logger.info(
+        "AI speech transcribed request_id=%s language=%s role=%s duration_ms=%s transcript_chars=%s elapsed_ms=%.1f",
+        clientRequestId, sourceLanguage, speakerRole, payload.get("durationMs"), len(payload.get("transcript", "")), (time.perf_counter() - started_at) * 1000,
+    )
+    return SpeechTranscriptionResponse(
+        transcript=payload["transcript"], sourceLanguage=sourceLanguage, speakerRole=speakerRole, model=payload.get("model", "omnilingual-asr-300m-int8"),
+    )
+
+
+async def _speech_health() -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{SPEECH_SERVICE_URL}/health")
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as exc:
+        return {"enabled": False, "loaded": False, "container": "unavailable", "error": type(exc).__name__}
 
 
 @app.post("/ai/patient-summary", response_model=PatientSummaryResponse)

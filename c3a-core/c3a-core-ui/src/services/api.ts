@@ -1,5 +1,6 @@
 // src/services/api.ts
 import { NativeModules, Platform } from 'react-native';
+import { File } from 'expo-file-system';
 import {
   ApiChatRequest,
   ApiChatResponse,
@@ -15,6 +16,7 @@ import {
   TrainingTopic,
   TranslationRequest,
   TranslationResponse,
+  SpeechTranscriptionResponse,
   VisitReportRequest,
   VisitReportResponse,
   VisitQueueItem,
@@ -396,6 +398,49 @@ export async function translateText(
     method: 'POST',
     body: JSON.stringify(request),
   }, 120000);
+}
+
+export async function transcribeSpeech(uri: string, sourceLanguage: string, speakerRole: 'care_worker' | 'patient', visitId?: string): Promise<SpeechTranscriptionResponse> {
+  const form = new FormData();
+  // Expo's current fetch implementation cannot turn React Native's legacy
+  // `{ uri, name, type }` upload object into multipart data. File implements
+  // the Blob/bytes interface it needs, so the request can be encoded natively.
+  const audioFile = new File(uri);
+  form.append('audio', audioFile, 'utterance.m4a');
+  form.append('sourceLanguage', sourceLanguage);
+  form.append('speakerRole', speakerRole);
+  if (visitId) form.append('visitId', visitId);
+  const clientRequestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  form.append('clientRequestId', clientRequestId);
+
+  // Keep speech diagnostics metadata-only: no audio URI or transcript content.
+  console.info('Speech upload starting', {
+    clientRequestId,
+    sourceLanguage,
+    speakerRole,
+    hasVisitId: Boolean(visitId),
+  });
+
+  try {
+    const res = await fetchWithTimeout(`${getApiBaseUrl()}/speech/transcribe`, {
+      method: 'POST',
+      headers: {
+        'bypass-tunnel-reminder': 'true',
+        'ngrok-skip-browser-warning': 'true',
+      },
+      body: form,
+    }, 120000);
+    if (!res.ok) throw new ApiError(res.status, (await res.text()) || 'Speech transcription failed');
+    return res.json();
+  } catch (error) {
+    console.warn('Speech upload failed', {
+      clientRequestId,
+      sourceLanguage,
+      speakerRole,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function analyseRiskNote(

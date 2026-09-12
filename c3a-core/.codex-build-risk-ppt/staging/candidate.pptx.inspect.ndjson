@@ -1,0 +1,207 @@
+{"kind":"deck","id":"pr/fdq69c","name":"Deck"}
+{"kind":"layout","layoutId":"419f65e1-6f15-4f22-a0dc-f8f6936308df","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"a67eb31a-17c9-4991-bb4c-90420aad982d","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/kcvmot","slide":1,"title":"C3A Care","textShapes":4}
+{"kind":"shape","id":"sh/mt4bqhgj","slide":1,"bbox":[0,0,1280,720]}
+{"kind":"shape","id":"sh/9wvu1wzu","slide":1,"bbox":[806,0,474,720]}
+{"kind":"shape","id":"sh/ovmtsry9","slide":1,"bbox":[891,115,265,265]}
+{"kind":"shape","id":"sh/fqdcv2hs","slide":1,"bbox":[956,180,265,265]}
+{"kind":"shape","id":"sh/epkbmhg7","slide":1,"bbox":[850,342,214,214]}
+{"kind":"textbox","id":"sh/1svuxczy","slide":1,"text":"C3A Care\nRisk Alerts","textPreview":"C3A Care | Risk Alerts","textChars":20,"textLines":2,"bbox":[78,172,640,150]}
+{"kind":"textbox","id":"sh/0rmto7yd","slide":1,"text":"Implementation overview","textPreview":"Implementation overview","textChars":23,"textLines":1,"bbox":[82,345,450,32]}
+{"kind":"shape","id":"sh/jmxc76xw","slide":1,"bbox":[82,412,140,0]}
+{"kind":"textbox","id":"sh/yloby1gr","slide":1,"text":"Medication, location and care-task monitoring\nwith actionable alerts and AI-aware guidance","textPreview":"Medication, location and care-task monitoring | with actionable alerts and AI-aware guidance","textChars":90,"textLines":2,"bbox":[82,448,570,64]}
+{"kind":"textbox","id":"sh/gratoz61","slide":1,"text":"COMP6015 · C3A Core","textPreview":"COMP6015 · C3A Core","textChars":19,"textLines":1,"bbox":[82,639,240,22]}
+{"kind":"notes","id":"nt/kcvmot","slide":1,"text":"Overview of the risk alert feature implemented for the C3A care workflow."}
+{"kind":"slide","id":"sl/utzqa5","slide":2,"title":"02","textShapes":12}
+{"kind":"textbox","id":"sh/kz6d47il","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[64,40,45,24]}
+{"kind":"textbox","id":"sh/jyxcv210","slide":2,"text":"Risk alert capability","textPreview":"Risk alert capability","textChars":21,"textLines":1,"bbox":[64,72,1040,54]}
+{"kind":"textbox","id":"sh/yxov2x0f","slide":2,"text":"The system detects exceptions during a visit and keeps the response connected to the care workflow.","textPreview":"The system detects exceptions during a visit and keeps the response connected to the care workflow.","textChars":99,"textLines":1,"bbox":[64,132,1030,30]}
+{"kind":"shape","id":"sh/xwfutsja","slide":2,"bbox":[64,172,1152,0]}
+{"kind":"textbox","id":"sh/wv6d07ip","slide":2,"text":"C3A Care Risk Alerts","textPreview":"C3A Care Risk Alerts","textChars":20,"textLines":1,"bbox":[64,680,270,18]}
+{"kind":"textbox","id":"sh/buxcr214","slide":2,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[1195,680,20,18]}
+{"kind":"shape","id":"sh/atobyx0j","slide":2,"bbox":[64,228,345,235]}
+{"kind":"shape","id":"sh/hsju5wje","slide":2,"bbox":[64,228,7,235]}
+{"kind":"textbox","id":"sh/grqdwrit","slide":2,"text":"Medication risk","textPreview":"Medication risk","textChars":15,"textLines":1,"bbox":[88,248,303,28]}
+{"kind":"textbox","id":"sh/2t8nqtoz","slide":2,"text":"Medication not taken, delayed support, declined medication, unavailable medication or an unconfirmed outcome.","textPreview":"Medication not taken, delayed support, declined medication, unavailable medication or an unconfirmed outcome.","textChars":109,"textLines":1,"bbox":[88,285,303,163]}
+{"kind":"shape","id":"sh/3uh4jy5k","slide":2,"bbox":[467,228,345,235]}
+{"kind":"shape","id":"sh/ovq5s365","slide":2,"bbox":[467,228,7,235]}
+{"kind":"textbox","id":"sh/pwzml8nq","slide":2,"text":"GPS location risk","textPreview":"GPS location risk","textChars":17,"textLines":1,"bbox":[491,248,303,28]}
+{"kind":"textbox","id":"sh/e5onmto3","slide":2,"text":"The server compares check-in and check-out coordinates with the planned visit location and allowed distance.","textPreview":"The server compares check-in and check-out coordinates with the planned visit location and allowed distance.","textChars":108,"textLines":1,"bbox":[491,285,303,163]}
+{"kind":"shape","id":"sh/fqx4fy5o","slide":2,"bbox":[870,228,345,235]}
+{"kind":"shape","id":"sh/grq5oj6t","slide":2,"bbox":[870,228,7,235]}
+{"kind":"textbox","id":"sh/1szmhone","slide":2,"text":"Care task risk","textPreview":"Care task risk","textChars":14,"textLines":1,"bbox":[894,248,303,28]}
+{"kind":"textbox","id":"sh/y1snydo7","slide":2,"text":"Tasks marked delayed, skipped or incomplete, plus pending tasks that pass their due time.","textPreview":"Tasks marked delayed, skipped or incomplete, plus pending tasks that pass their due time.","textChars":89,"textLines":1,"bbox":[894,285,303,163]}
+{"kind":"textbox","id":"sh/zm14ri5s","slide":2,"text":"Each rule creates or updates a visit-level alert with a stable key, preventing duplicate alerts for the same issue.","textPreview":"Each rule creates or updates a visit-level alert with a stable key, preventing duplicate alerts for the same issue.","textChars":115,"textLines":1,"bbox":[137,541,1006,38]}
+{"kind":"notes","id":"nt/utzqa5","slide":2,"text":"The implementation currently covers medication, GPS location and care task risks."}
+{"kind":"slide","id":"sl/ol0hjz","slide":3,"title":"03","textShapes":18}
+{"kind":"textbox","id":"sh/b6983mpk","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[64,40,45,24]}
+{"kind":"textbox","id":"sh/cri9crq5","slide":3,"text":"Server-side risk detection","textPreview":"Server-side risk detection","textChars":26,"textLines":1,"bbox":[64,72,1040,54]}
+{"kind":"textbox","id":"sh/dsrq5c7q","slide":3,"text":"Rules use persisted care data rather than relying only on client-side status labels.","textPreview":"Rules use persisted care data rather than relying only on client-side status labels.","textChars":84,"textLines":1,"bbox":[64,132,1030,30]}
+{"kind":"shape","id":"sh/21g76x83","slide":3,"bbox":[64,172,1152,0]}
+{"kind":"textbox","id":"sh/32p8z2po","slide":3,"text":"C3A Care Risk Alerts","textPreview":"C3A Care Risk Alerts","textChars":20,"textLines":1,"bbox":[64,680,270,18]}
+{"kind":"textbox","id":"sh/o3i987qt","slide":3,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[1195,680,20,18]}
+{"kind":"textbox","id":"sh/p4rq1c7e","slide":3,"text":"Inputs","textPreview":"Inputs","textChars":6,"textLines":1,"bbox":[82,220,150,28]}
+{"kind":"textbox","id":"sh/uxg72x8r","slide":3,"text":"Rule evaluation","textPreview":"Rule evaluation","textChars":15,"textLines":1,"bbox":[510,220,190,28]}
+{"kind":"textbox","id":"sh/fyp8v2pc","slide":3,"text":"Result","textPreview":"Result","textChars":6,"textLines":1,"bbox":[950,220,150,28]}
+{"kind":"shape","id":"sh/bil0fqto","slide":3,"bbox":[64,270,275,105]}
+{"kind":"shape","id":"sh/ahcjmlc3","slide":3,"bbox":[64,270,7,105]}
+{"kind":"textbox","id":"sh/xk3ihgbu","slide":3,"text":"Medication support","textPreview":"Medication support","textChars":18,"textLines":1,"bbox":[88,290,233,28]}
+{"kind":"textbox","id":"sh/cju1ova9","slide":3,"text":"Status, medication item outcome and notes","textPreview":"Status, medication item outcome and notes","textChars":41,"textLines":1,"bbox":[88,327,233,33]}
+{"kind":"shape","id":"sh/zm5kjqt0","slide":3,"bbox":[64,405,275,105]}
+{"kind":"shape","id":"sh/ylwjqlsf","slide":3,"bbox":[64,405,7,105]}
+{"kind":"textbox","id":"sh/lon2l0bq","slide":3,"text":"Task status","textPreview":"Task status","textChars":11,"textLines":1,"bbox":[88,425,233,28]}
+{"kind":"textbox","id":"sh/kne1sva5","slide":3,"text":"Pending, delayed, issue, skipped and due time","textPreview":"Pending, delayed, issue, skipped and due time","textChars":45,"textLines":1,"bbox":[88,462,233,33]}
+{"kind":"shape","id":"sh/fq1076tg","slide":3,"bbox":[64,540,275,105]}
+{"kind":"shape","id":"sh/epsje1cv","slide":3,"bbox":[64,540,7,105]}
+{"kind":"textbox","id":"sh/i503m9cj","slide":3,"text":"Location snapshot","textPreview":"Location snapshot","textChars":17,"textLines":1,"bbox":[88,560,233,28]}
+{"kind":"textbox","id":"sh/j694fed4","slide":3,"text":"GPS coordinates, planned point and threshold","textPreview":"GPS coordinates, planned point and threshold","textChars":44,"textLines":1,"bbox":[88,597,233,33]}
+{"kind":"shape","id":"sh/47ilojup","slide":3,"bbox":[466,330,340,210]}
+{"kind":"shape","id":"sh/58rmh4va","slide":3,"bbox":[466,330,7,210]}
+{"kind":"textbox","id":"sh/uhg3ipcn","slide":3,"text":"Rule modules","textPreview":"Rule modules","textChars":12,"textLines":1,"bbox":[490,350,298,28]}
+{"kind":"textbox","id":"sh/vip4bud8","slide":3,"text":"Medication rule map\nChecklist monitor\nLocation monitor with Haversine distance","textPreview":"Medication rule map | Checklist monitor | Location monitor with Haversine distance","textChars":78,"textLines":3,"bbox":[490,387,298,138]}
+{"kind":"shape","id":"sh/wjylkzud","slide":3,"bbox":[914,330,300,210]}
+{"kind":"shape","id":"sh/h47md4vy","slide":3,"bbox":[914,330,7,210]}
+{"kind":"textbox","id":"sh/mdg3epwb","slide":3,"text":"Risk alert","textPreview":"Risk alert","textChars":10,"textLines":1,"bbox":[938,350,258,28]}
+{"kind":"textbox","id":"sh/7ep47udw","slide":3,"text":"Severity, type, message, trigger source, visit ID and structured details","textPreview":"Severity, type, message, trigger source, visit ID and structured details","textChars":72,"textLines":1,"bbox":[938,387,258,138]}
+{"kind":"shape","id":"sh/9kfy9cjq","slide":3,"bbox":[350,458,98,0]}
+{"kind":"shape","id":"sh/oj6x07i5","slide":3,"bbox":[436,451,14,14]}
+{"kind":"shape","id":"sh/nixg7m1k","slide":3,"bbox":[814,438,82,0]}
+{"kind":"shape","id":"sh/mhofyh0z","slide":3,"bbox":[884,431,14,14]}
+{"kind":"notes","id":"nt/ol0hjz","slide":3,"text":"The backend evaluates medication, care-task and location conditions. Location distance is recalculated on the server using the Haversine formula."}
+{"kind":"slide","id":"sl/vqo73k","slide":4,"title":"04","textShapes":14}
+{"kind":"textbox","id":"sh/xgfyx0za","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[64,40,45,24]}
+{"kind":"textbox","id":"sh/adozmlgj","slide":4,"text":"Alert lifecycle and audit trail","textPreview":"Alert lifecycle and audit trail","textChars":31,"textLines":1,"bbox":[64,72,1040,54]}
+{"kind":"textbox","id":"sh/bexgvqh4","slide":4,"text":"Alerts remain visible until staff record an outcome. Each state change is stored for review.","textPreview":"Alerts remain visible until staff record an outcome. Each state change is stored for review.","textChars":92,"textLines":1,"bbox":[64,132,1030,30]}
+{"kind":"shape","id":"sh/kj6hsvyl","slide":4,"bbox":[64,172,1152,0]}
+{"kind":"textbox","id":"sh/lkzy10z6","slide":4,"text":"C3A Care Risk Alerts","textPreview":"C3A Care Risk Alerts","textChars":20,"textLines":1,"bbox":[64,680,270,18]}
+{"kind":"textbox","id":"sh/yhozq5gv","slide":4,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[1195,680,20,18]}
+{"kind":"shape","id":"sh/jixgzahg","slide":4,"bbox":[142,260,120,120]}
+{"kind":"textbox","id":"sh/8nqhwfyx","slide":4,"text":"Active","textPreview":"Active","textChars":6,"textLines":1,"bbox":[148,302,108,28]}
+{"kind":"textbox","id":"sh/t8zypkfi","slide":4,"text":"The rule detects an unresolved issue","textPreview":"The rule detects an unresolved issue","textChars":36,"textLines":1,"bbox":[84,410,236,66]}
+{"kind":"shape","id":"sh/54z6t83e","slide":4,"bbox":[279,320,54,0]}
+{"kind":"shape","id":"sh/k3qp0n2t","slide":4,"bbox":[321,313,14,14]}
+{"kind":"shape","id":"sh/j2horil8","slide":4,"bbox":[400,260,120,120]}
+{"kind":"textbox","id":"sh/i187ydkn","slide":4,"text":"Acknowledged","textPreview":"Acknowledged","textChars":12,"textLines":1,"bbox":[406,302,108,28]}
+{"kind":"textbox","id":"sh/t8j6xs3a","slide":4,"text":"A worker confirms the alert and starts review","textPreview":"A worker confirms the alert and starts review","textChars":45,"textLines":1,"bbox":[342,410,236,66]}
+{"kind":"shape","id":"sh/s7ap4n2p","slide":4,"bbox":[537,320,54,0]}
+{"kind":"shape","id":"sh/761ovil4","slide":4,"bbox":[579,313,14,14]}
+{"kind":"shape","id":"sh/65872dkj","slide":4,"bbox":[658,260,120,120]}
+{"kind":"textbox","id":"sh/9cf6lo36","slide":4,"text":"Resolved","textPreview":"Resolved","textChars":8,"textLines":1,"bbox":[664,302,108,28]}
+{"kind":"textbox","id":"sh/8b65s32l","slide":4,"text":"The issue has been handled","textPreview":"The issue has been handled","textChars":26,"textLines":1,"bbox":[600,410,236,66]}
+{"kind":"shape","id":"sh/0fap83ah","slide":4,"bbox":[795,320,54,0]}
+{"kind":"shape","id":"sh/1gj618b2","slide":4,"bbox":[837,313,14,14]}
+{"kind":"shape","id":"sh/eds76tcb","slide":4,"bbox":[916,260,120,120]}
+{"kind":"textbox","id":"sh/fe1ozytw","slide":4,"text":"Dismissed","textPreview":"Dismissed","textChars":9,"textLines":1,"bbox":[922,302,108,28]}
+{"kind":"textbox","id":"sh/ojupc3ad","slide":4,"text":"A worker records that follow-up is not required","textPreview":"A worker records that follow-up is not required","textChars":47,"textLines":1,"bbox":[858,410,236,66]}
+{"kind":"shape","id":"sh/9k3658by","slide":4,"bbox":[164,548,950,68]}
+{"kind":"textbox","id":"sh/2hs7ads7","slide":4,"text":"Audit record: previous state · resulting state · worker · role · timestamp · optional review note","textPreview":"Audit record: previous state · resulting state · worker · role · timestamp · optional review note","textChars":97,"textLines":1,"bbox":[190,570,900,26]}
+{"kind":"notes","id":"nt/vqo73k","slide":4,"text":"Risk alerts support active, acknowledged, resolved and dismissed states. The database records who performed each action, when it happened and any note."}
+{"kind":"slide","id":"sl/3rulkl","slide":5,"title":"05","textShapes":15}
+{"kind":"textbox","id":"sh/vi1kfudc","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[64,40,45,24]}
+{"kind":"textbox","id":"sh/wja1ozux","slide":5,"text":"Care workflow integration","textPreview":"Care workflow integration","textChars":25,"textLines":1,"bbox":[64,72,1040,54]}
+{"kind":"textbox","id":"sh/hkj2h4bi","slide":5,"text":"The risk state appears in the patient view and stays synchronized with the active visit.","textPreview":"The risk state appears in the patient view and stays synchronized with the active visit.","textChars":88,"textLines":1,"bbox":[64,132,1030,30]}
+{"kind":"shape","id":"sh/ilsjq9c3","slide":5,"bbox":[64,172,1152,0]}
+{"kind":"textbox","id":"sh/jm1kjeto","slide":5,"text":"C3A Care Risk Alerts","textPreview":"C3A Care Risk Alerts","textChars":20,"textLines":1,"bbox":[64,680,270,18]}
+{"kind":"textbox","id":"sh/4nalsju9","slide":5,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[1195,680,20,18]}
+{"kind":"textbox","id":"sh/5oj2l4bu","slide":5,"text":"Patient page","textPreview":"Patient page","textChars":12,"textLines":1,"bbox":[100,220,250,32]}
+{"kind":"textbox","id":"sh/6pc3u9cz","slide":5,"text":"Things to watch shows open alerts.\nAlert history keeps resolved and dismissed items visible.","textPreview":"Things to watch shows open alerts. | Alert history keeps resolved and dismissed items visible.","textChars":92,"textLines":2,"bbox":[100,273,342,66]}
+{"kind":"shape","id":"sh/rqlknetk","slide":5,"bbox":[100,368,326,0]}
+{"kind":"shape","id":"sh/jedcj61w","slide":5,"bbox":[100,400,90,30]}
+{"kind":"textbox","id":"sh/id4bq1kb","slide":5,"text":"Review","textPreview":"Review","textChars":6,"textLines":1,"bbox":[110,406,70,18]}
+{"kind":"shape","id":"sh/50fulwj2","slide":5,"bbox":[208,400,94,30]}
+{"kind":"textbox","id":"sh/4fmtsr2h","slide":5,"text":"Resolve","textPreview":"Resolve","textChars":7,"textLines":1,"bbox":[218,406,74,18]}
+{"kind":"shape","id":"sh/vadcfm10","slide":5,"bbox":[320,400,98,30]}
+{"kind":"textbox","id":"sh/u94bmhkf","slide":5,"text":"Dismiss","textPreview":"Dismiss","textChars":7,"textLines":1,"bbox":[330,406,78,18]}
+{"kind":"textbox","id":"sh/hcvuhwjq","slide":5,"text":"Workers can add an optional review note with every action.","textPreview":"Workers can add an optional review note with every action.","textChars":58,"textLines":1,"bbox":[100,457,330,52]}
+{"kind":"shape","id":"sh/wbmtor2l","slide":5,"bbox":[512,346,105,64]}
+{"kind":"shape","id":"sh/f6xcrq14","slide":5,"bbox":[668,267,440,160]}
+{"kind":"shape","id":"sh/e5ovylkj","slide":5,"bbox":[668,267,7,160]}
+{"kind":"textbox","id":"sh/q1sfqp4r","slide":5,"text":"Scenario refresh","textPreview":"Scenario refresh","textChars":16,"textLines":1,"bbox":[692,287,398,28]}
+{"kind":"textbox","id":"sh/b21wzalc","slide":5,"text":"After an action, the UI reloads the current scenario so tasks, visit status, alerts and recent events remain consistent.","textPreview":"After an action, the UI reloads the current scenario so tasks, visit status, alerts and recent events remain consistent.","textChars":120,"textLines":1,"bbox":[692,324,398,88]}
+{"kind":"shape","id":"sh/c3axsfmx","slide":5,"bbox":[668,470,440,108]}
+{"kind":"textbox","id":"sh/d4je1k3i","slide":5,"text":"Access checks","textPreview":"Access checks","textChars":13,"textLines":1,"bbox":[694,491,160,26]}
+{"kind":"textbox","id":"sh/y5sfupk3","slide":5,"text":"Visit reads and updates include worker ID and role. The API returns 403 when the worker cannot access the visit.","textPreview":"Visit reads and updates include worker ID and role. The API returns 403 when the worker cannot access the visit.","textChars":112,"textLines":1,"bbox":[694,526,388,35]}
+{"kind":"notes","id":"nt/3rulkl","slide":5,"text":"The Patient page provides review, resolve and dismiss actions. Visit APIs also enforce worker and role context."}
+{"kind":"slide","id":"sl/uxaqaq","slide":6,"title":"06","textShapes":12}
+{"kind":"textbox","id":"sh/50ri5sz2","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[64,40,45,24]}
+{"kind":"textbox","id":"sh/ixgjuxgb","slide":6,"text":"Risk-aware AI assistance","textPreview":"Risk-aware AI assistance","textChars":24,"textLines":1,"bbox":[64,72,1040,54]}
+{"kind":"textbox","id":"sh/3y903ihw","slide":6,"text":"The chat request sends current risk context to the model so answers reflect the active care situation.","textPreview":"The chat request sends current risk context to the model so answers reflect the active care situation.","textChars":102,"textLines":1,"bbox":[64,132,1030,30]}
+{"kind":"shape","id":"sh/gvy1snyl","slide":6,"bbox":[64,172,1152,0]}
+{"kind":"textbox","id":"sh/hw7i1szq","slide":6,"text":"C3A Care Risk Alerts","textPreview":"C3A Care Risk Alerts","textChars":20,"textLines":1,"bbox":[64,680,270,18]}
+{"kind":"textbox","id":"sh/utgzqdgf","slide":6,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[1195,680,20,18]}
+{"kind":"shape","id":"sh/vup0zih0","slide":6,"bbox":[66,248,270,250]}
+{"kind":"shape","id":"sh/0r2147yp","slide":6,"bbox":[66,248,7,250]}
+{"kind":"textbox","id":"sh/1sbidcza","slide":6,"text":"Current context","textPreview":"Current context","textChars":15,"textLines":1,"bbox":[90,268,228,28]}
+{"kind":"textbox","id":"sh/pwj2pgrm","slide":6,"text":"Patient profile\nVisit details\nCare tasks\nMedication support record\nOpen risk alerts","textPreview":"Patient profile | Visit details | Care tasks | Medication support record | Open risk alerts","textChars":83,"textLines":5,"bbox":[90,305,228,178]}
+{"kind":"shape","id":"sh/4valgba1","slide":6,"bbox":[354,370,118,0]}
+{"kind":"shape","id":"sh/3a1kn69g","slide":6,"bbox":[460,363,14,14]}
+{"kind":"shape","id":"sh/29s3e1sv","slide":6,"bbox":[492,248,300,250]}
+{"kind":"shape","id":"sh/h8j2lwba","slide":6,"bbox":[492,248,7,250]}
+{"kind":"textbox","id":"sh/g7alcbap","slide":6,"text":"Prompt preparation","textPreview":"Prompt preparation","textChars":18,"textLines":1,"bbox":[516,268,258,28]}
+{"kind":"textbox","id":"sh/f6hkj6t4","slide":6,"text":"The prompt places supplied context ahead of general guidance. It includes medication state, task state, alert type, severity, details and review note.","textPreview":"The prompt places supplied context ahead of general guidance. It includes medication state, task state, alert type, severity, details and...","textChars":150,"textLines":1,"bbox":[516,305,258,178]}
+{"kind":"shape","id":"sh/u58ja1sz","slide":6,"bbox":[810,370,118,0]}
+{"kind":"shape","id":"sh/1432x0ru","slide":6,"bbox":[916,363,14,14]}
+{"kind":"shape","id":"sh/03ulova9","slide":6,"bbox":[948,248,270,250]}
+{"kind":"shape","id":"sh/k725kzi5","slide":6,"bbox":[948,248,7,250]}
+{"kind":"textbox","id":"sh/l8bmt4zq","slide":6,"text":"Answer with sources","textPreview":"Answer with sources","textChars":19,"textLines":1,"bbox":[972,268,228,28]}
+{"kind":"textbox","id":"sh/y5kni90f","slide":6,"text":"The response can identify guideline evidence, patient records, visit context or general model guidance.","textPreview":"The response can identify guideline evidence, patient records, visit context or general model guidance.","textChars":103,"textLines":1,"bbox":[972,305,228,178]}
+{"kind":"textbox","id":"sh/j6t4ruhk","slide":6,"text":"Example: if medication support is delayed, the model receives that fact and can give care-plan-focused follow-up guidance.","textPreview":"Example: if medication support is delayed, the model receives that fact and can give care-plan-focused follow-up guidance.","textChars":122,"textLines":1,"bbox":[122,562,1038,38]}
+{"kind":"notes","id":"nt/uxaqaq","slide":6,"text":"The AI receives the current open risks, including medication and care-task states. The UI renders structured source references below the answer."}
+{"kind":"slide","id":"sl/ey0mub","slide":7,"title":"07","textShapes":14}
+{"kind":"textbox","id":"sh/ori9wry1","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[64,40,45,24]}
+{"kind":"textbox","id":"sh/nq9snmxg","slide":7,"text":"AI safety and traceability","textPreview":"AI safety and traceability","textChars":26,"textLines":1,"bbox":[64,72,1040,54]}
+{"kind":"textbox","id":"sh/2p0ruhgv","slide":7,"text":"The assistant uses the supplied care context as its main factual basis and exposes the evidence used.","textPreview":"The assistant uses the supplied care context as its main factual basis and exposes the evidence used.","textChars":101,"textLines":1,"bbox":[64,132,1030,30]}
+{"kind":"shape","id":"sh/1oralcfa","slide":7,"bbox":[64,172,1152,0]}
+{"kind":"textbox","id":"sh/0ni9s7yp","slide":7,"text":"C3A Care Risk Alerts","textPreview":"C3A Care Risk Alerts","textChars":20,"textLines":1,"bbox":[64,680,270,18]}
+{"kind":"textbox","id":"sh/fm9sj2h4","slide":7,"text":"7","textPreview":"7","textChars":1,"textLines":1,"bbox":[1195,680,20,18]}
+{"kind":"shape","id":"sh/el0rqhgj","slide":7,"bbox":[64,224,535,323]}
+{"kind":"textbox","id":"sh/dkrahcze","slide":7,"text":"Prompt guardrails","textPreview":"Prompt guardrails","textChars":17,"textLines":1,"bbox":[96,260,300,30]}
+{"kind":"textbox","id":"sh/sjy9o7yt","slide":7,"text":"• Do not invent patient information\n• Do not make a diagnosis\n• Do not recommend an additional dose\n• When evidence is insufficient, advise the user to follow the care plan or contact a nurse or supervisor","textPreview":"• Do not invent patient information | • Do not make a diagnosis | • Do not recommend an additional dose | • When evidence is insufficient...","textChars":205,"textLines":4,"bbox":[96,320,445,170]}
+{"kind":"shape","id":"sh/6pczmx0z","slide":7,"bbox":[666,224,550,323]}
+{"kind":"textbox","id":"sh/7ql0v21k","slide":7,"text":"Sources used","textPreview":"Sources used","textChars":12,"textLines":1,"bbox":[700,260,240,30]}
+{"kind":"textbox","id":"sh/sruhoni5","slide":7,"text":"Each response identifies the information used to produce it:","textPreview":"Each response identifies the information used to produce it:","textChars":60,"textLines":1,"bbox":[700,316,450,25]}
+{"kind":"shape","id":"sh/tsnixsjq","slide":7,"bbox":[700,365,104,30]}
+{"kind":"textbox","id":"sh/i1czidk3","slide":7,"text":"Guideline","textPreview":"Guideline","textChars":9,"textLines":1,"bbox":[710,371,84,18]}
+{"kind":"shape","id":"sh/jml0ri1o","slide":7,"bbox":[822,365,130,30]}
+{"kind":"textbox","id":"sh/knuhkn2t","slide":7,"text":"Patient record","textPreview":"Patient record","textChars":14,"textLines":1,"bbox":[832,371,110,18]}
+{"kind":"shape","id":"sh/5o3itsje","slide":7,"bbox":[970,365,122,30]}
+{"kind":"textbox","id":"sh/axszedkr","slide":7,"text":"Visit context","textPreview":"Visit context","textChars":13,"textLines":1,"bbox":[980,371,102,18]}
+{"kind":"shape","id":"sh/vy10ni1c","slide":7,"bbox":[700,414,150,30]}
+{"kind":"textbox","id":"sh/z2hwveh4","slide":7,"text":"General guidance","textPreview":"General guidance","textChars":16,"textLines":1,"bbox":[710,420,130,18]}
+{"kind":"textbox","id":"sh/y18fm90j","slide":7,"text":"References can include a source label, reason, document details, page range and record type.","textPreview":"References can include a source label, reason, document details, page range and record type.","textChars":92,"textLines":1,"bbox":[700,473,440,38]}
+{"kind":"notes","id":"nt/ey0mub","slide":7,"text":"The safety prompt prevents invented facts, diagnoses and additional-dose advice. Structured sources make the answer traceable."}
+{"kind":"slide","id":"sl/7bb4jm","slide":8,"title":"Risk alert workflow","textShapes":18}
+{"kind":"textbox","id":"sh/wzy90re9","slide":8,"text":"Risk alert workflow","textPreview":"Risk alert workflow","textChars":19,"textLines":1,"bbox":[74,66,550,52]}
+{"kind":"textbox","id":"sh/vyp87mx4","slide":8,"text":"A connected workflow from exception detection to accountable follow-up and safer AI support.","textPreview":"A connected workflow from exception detection to accountable follow-up and safer AI support.","textChars":92,"textLines":1,"bbox":[76,128,800,30]}
+{"kind":"shape","id":"sh/adgryhwj","slide":8,"bbox":[76,282,58,58]}
+{"kind":"textbox","id":"sh/9c7q5cfy","slide":8,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[76,297,58,23]}
+{"kind":"textbox","id":"sh/8by9wred","slide":8,"text":"Care data","textPreview":"Care data","textChars":9,"textLines":1,"bbox":[76,366,190,27]}
+{"kind":"textbox","id":"sh/nap83mxs","slide":8,"text":"Medication, tasks and location","textPreview":"Medication, tasks and location","textChars":30,"textLines":1,"bbox":[76,405,180,50]}
+{"kind":"shape","id":"sh/m9wruhw7","slide":8,"bbox":[144,311,130,0]}
+{"kind":"shape","id":"sh/t8bahgv2","slide":8,"bbox":[262,304,14,14]}
+{"kind":"shape","id":"sh/s7i98beh","slide":8,"bbox":[304,282,58,58]}
+{"kind":"textbox","id":"sh/2h0va1s7","slide":8,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[304,297,58,23]}
+{"kind":"textbox","id":"sh/ni9cj6ts","slide":8,"text":"Rules","textPreview":"Rules","textChars":5,"textLines":1,"bbox":[304,366,190,27]}
+{"kind":"textbox","id":"sh/ojidcbad","slide":8,"text":"Server-side risk evaluation","textPreview":"Server-side risk evaluation","textChars":27,"textLines":1,"bbox":[304,405,180,50]}
+{"kind":"shape","id":"sh/pkrelgby","slide":8,"bbox":[372,311,130,0]}
+{"kind":"shape","id":"sh/etgv6hcb","slide":8,"bbox":[490,304,14,14]}
+{"kind":"shape","id":"sh/fupcfmtw","slide":8,"bbox":[532,282,58,58]}
+{"kind":"textbox","id":"sh/0vyd8ruh","slide":8,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[532,297,58,23]}
+{"kind":"textbox","id":"sh/1wruhwb2","slide":8,"text":"Alert","textPreview":"Alert","textChars":5,"textLines":1,"bbox":[532,366,190,27]}
+{"kind":"textbox","id":"sh/ypkvilsf","slide":8,"text":"Persistent visit-level risk state","textPreview":"Persistent visit-level risk state","textChars":33,"textLines":1,"bbox":[532,405,180,50]}
+{"kind":"shape","id":"sh/zqtwrqt0","slide":8,"bbox":[600,311,130,0]}
+{"kind":"shape","id":"sh/vulsji9c","slide":8,"bbox":[718,304,14,14]}
+{"kind":"shape","id":"sh/utcrads7","slide":8,"bbox":[760,282,58,58]}
+{"kind":"textbox","id":"sh/hw3alsri","slide":8,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[760,297,58,23]}
+{"kind":"textbox","id":"sh/wvu9cnax","slide":8,"text":"Action","textPreview":"Action","textChars":6,"textLines":1,"bbox":[760,366,190,27]}
+{"kind":"textbox","id":"sh/3y5sni9o","slide":8,"text":"Staff review with audit history","textPreview":"Staff review with audit history","textChars":31,"textLines":1,"bbox":[760,405,180,50]}
+{"kind":"shape","id":"sh/ixwbex83","slide":8,"bbox":[828,311,130,0]}
+{"kind":"shape","id":"sh/50napsru","slide":8,"bbox":[946,304,14,14]}
+{"kind":"shape","id":"sh/4zetgnq9","slide":8,"bbox":[988,282,58,58]}
+{"kind":"textbox","id":"sh/r25sr29k","slide":8,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[988,297,58,23]}
+{"kind":"textbox","id":"sh/q1wbix8z","slide":8,"text":"AI context","textPreview":"AI context","textChars":10,"textLines":1,"bbox":[988,366,190,27]}
+{"kind":"textbox","id":"sh/ory9876d","slide":8,"text":"Risk-aware answer with sources","textPreview":"Risk-aware answer with sources","textChars":30,"textLines":1,"bbox":[988,405,180,50]}
+{"kind":"shape","id":"sh/ps7a1c7y","slide":8,"bbox":[76,542,1128,0]}
+{"kind":"textbox","id":"sh/2pgr6xo7","slide":8,"text":"Outcome: the platform can identify risks early, preserve the handling record and give the AI the context it needs for safer assistance.","textPreview":"Outcome: the platform can identify risks early, preserve the handling record and give the AI the context it needs for safer assistance.","textChars":135,"textLines":1,"bbox":[76,578,1080,52]}
+{"kind":"notes","id":"nt/7bb4jm","slide":8,"text":"Summary of the end-to-end risk alert implementation."}
