@@ -1,13 +1,8 @@
-import React, { useState } from 'react';
-import { TrainingScreen } from './src/screens/TrainingScreen';
-import { VisitScreen } from './src/screens/VisitScreen';
+import React from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import { CareScreen } from './src/screens/CareScreen';
 
 export default function App() {
-  const [mode, setMode] = useState<'visits' | 'training'>('visits');
-
-  if (mode === 'training') {
-    return <TrainingScreen onClose={() => setMode('visits')} />;
-  }
-
-  return <VisitScreen onOpenTraining={() => setMode('training')} />;
+  return <SafeAreaProvider><StatusBar style="dark" /><CareScreen /></SafeAreaProvider>;
 }

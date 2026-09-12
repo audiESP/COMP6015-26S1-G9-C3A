@@ -1,3 +1,4 @@
+import tw from '../ui/tw';
 // src/components/ChatInput.tsx
 import React, { useState, useRef } from 'react';
 import {
@@ -103,77 +104,18 @@ export const ChatInput: React.FC<Props> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  wrapper: {
-    backgroundColor: '#F0F7F7',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#D5E8E8',
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 12,
-  },
-  attachmentsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 8,
-  },
-  attChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: '#C5DEDE',
-    maxWidth: 160,
-  },
-  attChipIcon: { fontSize: 12, marginRight: 4 },
-  attChipLabel: { fontSize: 12, color: '#0D7377', flex: 1 },
-  attChipRemove: { fontSize: 10, color: '#9BB5B5', marginLeft: 4 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: '#D5E8E8',
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-    shadowColor: '#0D7377',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  plusBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#E8F4F4',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 4,
-  },
-  plusIcon: { fontSize: 20, color: '#0D7377', lineHeight: 22 },
-  input: {
-    flex: 1,
-    fontSize: 15,
-    color: '#1A2B2B',
-    maxHeight: 120,
-    paddingHorizontal: 4,
-    paddingVertical: 6,
-  },
-  sendBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#C5DEDE',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 4,
-  },
-  sendBtnActive: { backgroundColor: '#0D7377' },
-  sendIcon: { color: '#FFFFFF', fontSize: 14, marginLeft: 2 },
-});
+const styles = {
+  wrapper: tw.style('bg-care-canvas border-t-[0.5px] border-t-care-line px-[12px] pt-[8px] pb-[12px]'),
+  attachmentsRow: tw.style('flex-row flex-wrap gap-[6px] mb-[8px]'),
+  attChip: tw.style('flex-row items-center bg-white rounded-[20px] px-[10px] py-[5px] border-[1px] border-[#C5DEDE] max-w-[160px]'),
+  attChipIcon: tw.style('text-[12px] mr-[4px]'),
+  attChipLabel: tw.style('text-[12px] text-care-primary flex-1'),
+  attChipRemove: tw.style('text-[12px] text-[#9BB5B5] ml-[4px]'),
+  row: tw.style('flex-row items-end bg-white rounded-[26px] border-[1px] border-care-line px-[4px] py-[4px]', {"shadowColor":"#0D7377","shadowOffset":{"width":0,"height":2},"shadowOpacity":0.06,"shadowRadius":6,"elevation":2}),
+  plusBtn: tw.style('w-[38px] h-[38px] rounded-[19px] bg-care-soft items-center justify-center mr-[4px]'),
+  plusIcon: tw.style('text-[20px] text-care-primary leading-[22px]'),
+  input: tw.style('flex-1 text-[15px] text-care-ink max-h-[120px] px-[4px] py-[6px]'),
+  sendBtn: tw.style('w-[38px] h-[38px] rounded-[19px] bg-[#C5DEDE] items-center justify-center ml-[4px]'),
+  sendBtnActive: tw.style('bg-care-primary'),
+  sendIcon: tw.style('text-white text-[14px] ml-[2px]'),
+};

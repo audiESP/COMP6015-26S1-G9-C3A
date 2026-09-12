@@ -1,3 +1,4 @@
+import tw from '../ui/tw';
 // src/components/ChatBubble.tsx
 import React from 'react';
 import {
@@ -90,114 +91,31 @@ export const ChatBubble: React.FC<Props> = ({ message, isTyping }) => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    marginVertical: 6,
-    paddingHorizontal: 12,
-    alignItems: 'flex-end',
-  },
-  userContainer: { justifyContent: 'flex-end' },
-  assistantContainer: { justifyContent: 'flex-start' },
-  bubble: {
-    maxWidth: '72%',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 2,
-  },
-  userBubble: {
-    backgroundColor: '#0D7377',
-    borderBottomRightRadius: 4,
-  },
-  assistantBubble: {
-    backgroundColor: '#FFFFFF',
-    borderBottomLeftRadius: 4,
-    maxWidth: '88%',
-  },
-  text: { fontSize: 15, lineHeight: 21 },
-  userText: { color: '#FFFFFF' },
-  assistantText: { color: '#1A2B2B' },
-  attachmentImage: {
-    width: 180,
-    height: 120,
-    borderRadius: 10,
-    marginTop: 8,
-  },
-  patientTag: {
-    marginTop: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  patientTagText: { color: '#fff', fontSize: 12 },
-  fileTag: {
-    marginTop: 6,
-    backgroundColor: '#F0F7F7',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  fileTagText: { color: '#0D7377', fontSize: 12 },
-  sourcesSection: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#C9D7D5',
-    marginTop: 12,
-    paddingTop: 10,
-  },
-  sourcesHeading: {
-    color: '#284443',
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  sourceRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 7,
-  },
-  sourceKind: {
-    borderRadius: 4,
-    marginRight: 8,
-    marginTop: 1,
-    minWidth: 62,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-  },
-  sourceKindText: {
-    color: '#263332',
-    fontSize: 10,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  sourceContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-  sourceLabel: {
-    color: '#183837',
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 17,
-  },
-  sourceDetails: {
-    color: '#526563',
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 1,
-  },
-  sourceReason: {
-    color: '#526563',
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 2,
-  },
-});
+const styles = {
+  container: tw.style('flex-row my-[6px] px-[12px] items-end'),
+  userContainer: tw.style('justify-end'),
+  assistantContainer: tw.style('justify-start'),
+  bubble: tw.style('max-w-[72%] px-[14px] py-[10px] rounded-[18px]', {"elevation":1,"shadowColor":"#000","shadowOffset":{"width":0,"height":1},"shadowOpacity":0.06,"shadowRadius":2}),
+  userBubble: tw.style('bg-care-primary rounded-br-[4px]'),
+  assistantBubble: tw.style('bg-white rounded-bl-[4px] max-w-[88%]'),
+  text: tw.style('text-[15px] leading-[21px]'),
+  userText: tw.style('text-white'),
+  assistantText: tw.style('text-care-ink'),
+  attachmentImage: tw.style('w-[180px] h-[120px] rounded-[10px] mt-[8px]'),
+  patientTag: tw.style('mt-[6px] rounded-[20px] px-[8px] py-[4px]', {"backgroundColor":"rgba(255,255,255,0.2)"}),
+  patientTagText: tw.style('text-[#fff] text-[12px]'),
+  fileTag: tw.style('mt-[6px] bg-care-canvas rounded-[20px] px-[8px] py-[4px]'),
+  fileTagText: tw.style('text-care-primary text-[12px]'),
+  sourcesSection: tw.style('border-t-[0.5px] border-t-[#C9D7D5] mt-[12px] pt-[10px]'),
+  sourcesHeading: tw.style('text-[#284443] text-[12px] font-semibold mb-[2px]'),
+  sourceRow: tw.style('flex-row items-start py-[7px]'),
+  sourceKind: tw.style('rounded-[4px] mr-[8px] mt-[1px] min-w-[62px] px-[6px] py-[3px]'),
+  sourceKindText: tw.style('text-[#263332] text-[12px] font-semibold text-center'),
+  sourceContent: tw.style('flex-1 min-w-[0px]'),
+  sourceLabel: tw.style('text-[#183837] text-[12px] font-semibold leading-[17px]'),
+  sourceDetails: tw.style('text-[#526563] text-[12px] leading-[16px] mt-[1px]'),
+  sourceReason: tw.style('text-[#526563] text-[12px] leading-[16px] mt-[2px]'),
+};
 
 const sourceKindLabels: Record<ChatSourceKind, string> = {
   guideline: 'Guideline',

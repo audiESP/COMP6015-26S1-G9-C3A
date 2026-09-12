@@ -1,3 +1,4 @@
+import tw from '../ui/tw';
 // src/components/AttachmentMenu.tsx
 import React from 'react';
 import {
@@ -69,44 +70,12 @@ export const AttachmentMenu: React.FC<Props> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'flex-end',
-    paddingBottom: 100,
-    paddingHorizontal: 16,
-  },
-  menu: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    overflow: 'hidden',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-  },
-  menuTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#9BB5B5',
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 8,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-  },
-  menuItemBorder: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#EDF2F2',
-  },
-  menuIcon: { fontSize: 22, marginRight: 14 },
-  menuLabel: { fontSize: 16, color: '#1A2B2B', fontWeight: '500' },
-});
+const styles = {
+  overlay: tw.style('flex-1 justify-end pb-[100px] px-[16px]', {"backgroundColor":"rgba(0,0,0,0.35)"}),
+  menu: tw.style('bg-white rounded-[16px] overflow-hidden', {"elevation":8,"shadowColor":"#000","shadowOffset":{"width":0,"height":4},"shadowOpacity":0.15,"shadowRadius":12}),
+  menuTitle: tw.style('text-[13px] font-semibold text-[#9BB5B5] px-[20px] pt-[14px] pb-[8px] tracking-[0.5px] uppercase'),
+  menuItem: tw.style('flex-row items-center px-[20px] py-[16px]'),
+  menuItemBorder: tw.style('border-b-[0.5px] border-b-[#EDF2F2]'),
+  menuIcon: tw.style('text-[22px] mr-[14px]'),
+  menuLabel: tw.style('text-[16px] text-care-ink font-medium'),
+};

@@ -142,6 +142,7 @@ export interface VisitContext {
 }
 
 export interface CareTask {
+  note?: string;
   id: string;
   label: string;
   type: CareTaskType;

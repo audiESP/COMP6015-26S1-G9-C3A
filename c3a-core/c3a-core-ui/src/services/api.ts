@@ -341,10 +341,11 @@ export async function updateTaskStatus(
   taskId: string,
   status: CareTaskStatus,
   workerId: string,
+  note?: string,
 ): Promise<ScenarioContext> {
   return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}`, {
     method: 'PATCH',
-    body: JSON.stringify({ status, workerId }),
+    body: JSON.stringify({ status, workerId, note }),
   });
 }
 
@@ -353,10 +354,11 @@ export async function reportTaskIssue(
   taskId: string,
   type: 'cannot_complete' | 'patient_declined' | 'safety_concern' | 'medication_delayed' | 'medication_unavailable' | 'medication_unable_to_confirm',
   workerId: string,
+  note?: string,
 ): Promise<ScenarioContext> {
   return requestJson(`/visits/${encodeURIComponent(visitId)}/tasks/${encodeURIComponent(taskId)}/issue`, {
     method: 'POST',
-    body: JSON.stringify({ type, workerId }),
+    body: JSON.stringify({ type, workerId, note }),
   });
 }
 
@@ -374,10 +376,11 @@ export async function finishVisit(
   visitId: string,
   workerId: string,
   checkOut?: LocationSnapshot,
+  report?: string,
 ): Promise<ScenarioContext> {
   return requestJson(`/visits/${encodeURIComponent(visitId)}/complete`, {
     method: 'POST',
-    body: JSON.stringify({ workerId, checkOut }),
+    body: JSON.stringify({ workerId, checkOut, report }),
   });
 }
 

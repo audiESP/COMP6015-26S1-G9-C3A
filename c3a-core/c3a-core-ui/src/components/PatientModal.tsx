@@ -1,3 +1,4 @@
+import tw from '../ui/tw';
 // src/components/PatientModal.tsx
 import React, { useState } from 'react';
 import {
@@ -120,76 +121,19 @@ export const PatientModal: React.FC<Props> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: '#FAFEFE',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingBottom: 36,
-    maxHeight: '85%',
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    backgroundColor: '#D1DFE0',
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginTop: 12,
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0D7377',
-    marginBottom: 20,
-  },
-  field: { marginBottom: 14 },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6A9999',
-    marginBottom: 6,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  input: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D8EAEA',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#1A2B2B',
-  },
-  multiline: { height: 80, textAlignVertical: 'top', paddingTop: 10 },
-  actions: {
-    flexDirection: 'row',
-    marginTop: 20,
-    gap: 12,
-  },
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#C0D8D8',
-    alignItems: 'center',
-  },
-  cancelText: { color: '#6A9999', fontWeight: '600', fontSize: 15 },
-  saveBtn: {
-    flex: 2,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#0D7377',
-    alignItems: 'center',
-  },
-  saveText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
-  disabled: { opacity: 0.45 },
-});
+const styles = {
+  overlay: tw.style('flex-1 justify-end', {"backgroundColor":"rgba(0,0,0,0.4)"}),
+  sheet: tw.style('bg-[#FAFEFE] rounded-tl-[24px] rounded-tr-[24px] px-[20px] pb-[36px] max-h-[85%]'),
+  handle: tw.style('w-[36px] h-[4px] bg-[#D1DFE0] rounded-[2px] self-center mt-[12px] mb-[16px]'),
+  title: tw.style('text-[18px] font-semibold text-care-primary mb-[20px]'),
+  field: tw.style('mb-[14px]'),
+  label: tw.style('text-[12px] font-semibold text-[#6A9999] mb-[6px] tracking-[0.4px] uppercase'),
+  input: tw.style('bg-white border-[1px] border-[#D8EAEA] rounded-[10px] px-[14px] py-[10px] text-[15px] text-care-ink'),
+  multiline: tw.style('h-[80px] pt-[10px]', {"textAlignVertical":"top"}),
+  actions: tw.style('flex-row mt-[20px] gap-[12px]'),
+  cancelBtn: tw.style('flex-1 py-[14px] rounded-[12px] border-[1px] border-[#C0D8D8] items-center'),
+  cancelText: tw.style('text-[#6A9999] font-semibold text-[15px]'),
+  saveBtn: tw.style('py-[14px] rounded-[12px] bg-care-primary items-center', {"flex":2}),
+  saveText: tw.style('text-white font-semibold text-[15px]'),
+  disabled: tw.style('opacity-45'),
+};

@@ -327,21 +327,24 @@ class VisitRepository:
                     self._insert_event(cursor, visit_id, "medication_given", worker_id, task_id=task["id"])
                 return self._get_scenario(cursor, visit_id)
 
-    def update_task_status(self, visit_id: str, task_id: str, status: str, worker_id: str | None = None) -> dict[str, Any]:
+    def update_task_status(self, visit_id: str, task_id: str, status: str, worker_id: str | None = None, note: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                self._visit_row_for_update(cursor, visit_id)
+                visit = self._visit_row_for_update(cursor, visit_id)
+                if visit["status"] == "completed":
+                    raise VisitValidationError("This visit is closed")
                 self._assert_visit_access(cursor, visit_id, worker_id)
                 self._task_row_for_update(cursor, visit_id, task_id)
                 cursor.execute(
                     """
                     update c3a_app_care_tasks
                     set status = %s,
+                        status_note = coalesce(%s, status_note),
                         completed_at = case when %s = 'completed' then coalesce(completed_at, now()) else null end,
                         updated_at = now()
                     where id = %s
                     """,
-                    (status, status, task_id),
+                    (status, note, status, task_id),
                 )
                 cursor.execute(
                     """
@@ -363,14 +366,14 @@ class VisitRepository:
                     self._insert_event(cursor, visit_id, "medication_given", worker_id, task_id=task_id)
                 return self._get_scenario(cursor, visit_id)
 
-    def report_task_issue(self, visit_id: str, task_id: str, issue_type: str, worker_id: str | None = None) -> dict[str, Any]:
+    def report_task_issue(self, visit_id: str, task_id: str, issue_type: str, worker_id: str | None = None, note: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 self._visit_row_for_update(cursor, visit_id)
                 self._assert_visit_access(cursor, visit_id, worker_id)
                 task = self._task_row_for_update(cursor, visit_id, task_id)
                 event_type, task_status, visit_status, lifecycle, alert = _issue_mapping(task, issue_type)
-                note = _issue_note(task, issue_type)
+                note = f"{_issue_note(task, issue_type)} {note.strip()}" if note and note.strip() else _issue_note(task, issue_type)
                 cursor.execute(
                     """
                     update c3a_app_care_tasks
@@ -524,7 +527,7 @@ class VisitRepository:
                     )
                 return self._get_scenario(cursor, visit_id)
 
-    def complete_visit(self, visit_id: str, worker_id: str | None, snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    def complete_visit(self, visit_id: str, worker_id: str | None, snapshot: dict[str, Any] | None, report: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 visit = self._visit_row_for_update(cursor, visit_id)
@@ -557,7 +560,7 @@ class VisitRepository:
                     """,
                     (visit_id,),
                 )
-                self._insert_event(cursor, visit_id, "visit_completed", worker_id)
+                self._insert_event(cursor, visit_id, "visit_completed", worker_id, note=report)
                 return self._get_scenario(cursor, visit_id)
 
     def shift_summary(self, worker_id: str, shift_date: date) -> dict[str, int]:
@@ -727,7 +730,8 @@ class VisitRepository:
                                        'type', t.type,
                                        'status', t.status,
                                        'dueAt', to_char(t.due_at, 'HH24:MI'),
-                                       'detail', t.detail
+                                       'detail', t.detail,
+                                       'note', t.status_note
                                    )
                                )
                            )

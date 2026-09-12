@@ -73,6 +73,7 @@ class VisitContext(BaseModel):
 
 
 class CareTaskContext(BaseModel):
+    note: Optional[str] = None
     id: Optional[str] = None
     label: Optional[str] = None
     type: Optional[str] = None
@@ -196,17 +197,20 @@ class StartVisitRequest(BaseModel):
 
 
 class CompleteVisitRequest(BaseModel):
+    report: Optional[str] = Field(default=None, max_length=100000)
     workerId: str
     checkOut: Optional[LocationSnapshotRequest] = None
 
 
 class TaskStatusRequest(BaseModel):
-    status: str
+    note: Optional[str] = Field(default=None, max_length=5000)
+    status: Literal["pending", "completed", "delayed", "skipped", "issue"]
     workerId: str
 
 
 class TaskIssueRequest(BaseModel):
-    type: str
+    note: Optional[str] = Field(default=None, max_length=5000)
+    type: Literal["cannot_complete", "patient_declined", "safety_concern", "medication_delayed", "medication_unavailable", "medication_unable_to_confirm"]
     workerId: str
 
 
