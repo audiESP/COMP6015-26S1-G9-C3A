@@ -53,6 +53,8 @@ from app.schemas import (
     ShiftSummaryResponse,
     StartVisitRequest,
     TaskIssueRequest,
+    TaskMaterialsRequest,
+    TaskMaterialsResponse,
     TaskStatusRequest,
     TrainingMaterialsResponse,
     TrainingSearchResponse,
@@ -218,6 +220,17 @@ def search_training_materials(q: str = ""):
         return TrainingSearchResponse(results=training_repository.search_materials(q))
     except Exception as exc:
         raise _training_error(exc) from exc
+
+
+@app.post("/training/task-materials", response_model=TaskMaterialsResponse)
+async def task_materials(req: TaskMaterialsRequest, request: Request):
+    try:
+        return await ai_client.task_materials(
+            req,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except AiServiceUnavailable as exc:
+        raise HTTPException(status_code=502, detail="AI service is unavailable") from exc
 
 
 @app.get("/workers/{worker_id}/visits", response_model=VisitQueueResponse)

@@ -11,6 +11,7 @@ import {
   MedicationSupportRecord,
   PatientInfo,
   ScenarioContext,
+  TaskMaterialsResponse,
   TrainingMaterial,
   TrainingSearchResult,
   TrainingTopic,
@@ -498,6 +499,17 @@ export async function searchTrainingMaterials(
   return requestJson(`/training/materials/search?q=${encodeURIComponent(query)}`, {
     method: 'GET',
   });
+}
+
+export async function fetchTaskMaterials(
+  taskLabel: string,
+  taskDetail?: string,
+  taskType?: string,
+): Promise<TaskMaterialsResponse> {
+  return requestJson('/training/task-materials', {
+    method: 'POST',
+    body: JSON.stringify({ taskLabel, taskDetail, taskType }),
+  }, 30000);
 }
 
 /**

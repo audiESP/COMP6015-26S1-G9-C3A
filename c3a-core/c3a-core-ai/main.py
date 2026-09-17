@@ -30,6 +30,7 @@ from logging_utils import add_exception_handlers, add_http_logging_middleware, p
 from ollama_service import OllamaService, OllamaServiceError, UnsupportedAttachmentError
 from rag.citations import RetrievedChunk
 from rag.retriever import RagRetriever
+from web_search import WebSearchService
 
 
 SERVICE_DIR = Path(__file__).resolve().parent
@@ -54,6 +55,9 @@ CHAT_RAG_ENABLED = _env_bool("CHAT_RAG_ENABLED", True)
 CHAT_RAG_TOP_K = int(os.getenv("CHAT_RAG_TOP_K", os.getenv("RAG_TOP_K", "3")))
 CHAT_RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("CHAT_RAG_MAX_CHARS_PER_CHUNK", "600"))
 CHAT_RAG_MIN_SCORE = float(os.getenv("CHAT_RAG_MIN_SCORE", "0.0"))
+TASK_MATERIALS_MIN_INTERNAL_RESULTS = int(os.getenv("TASK_MATERIALS_MIN_INTERNAL_RESULTS", "2"))
+TASK_MATERIALS_MIN_SCORE = float(os.getenv("TASK_MATERIALS_MIN_SCORE", "0.25"))
+TASK_MATERIALS_WEB_MAX_RESULTS = int(os.getenv("TASK_MATERIALS_WEB_MAX_RESULTS", "3"))
 
 app = FastAPI(title="C3A Core AI", version="1.0.0")
 
@@ -77,6 +81,7 @@ add_exception_handlers(
 service = OllamaService(enabled=AI_ENABLED)
 rag_retriever = RagRetriever()
 db_context_retriever = DbContextRetriever()
+web_search_service = WebSearchService()
 SPEECH_SERVICE_URL = os.getenv("SPEECH_SERVICE_URL", "http://127.0.0.1:8002").rstrip("/")
 SPEECH_SERVICE_TIMEOUT_SECONDS = float(os.getenv("SPEECH_SERVICE_TIMEOUT_SECONDS", "120"))
 
@@ -315,6 +320,31 @@ class RagSearchRequest(BaseModel):
     topK: Optional[int] = None
 
 
+class TaskMaterialsRequest(BaseModel):
+    taskLabel: str
+    taskDetail: Optional[str] = None
+    taskType: Optional[str] = None
+
+
+class TaskMaterialItem(BaseModel):
+    sourceType: Literal["internal", "web"]
+    title: str
+    snippet: str
+    url: Optional[str] = None
+    documentTitle: Optional[str] = None
+    section: Optional[str] = None
+    pageLabel: Optional[str] = None
+    score: Optional[float] = None
+
+
+class TaskMaterialsResponse(BaseModel):
+    query: str
+    items: list[TaskMaterialItem] = Field(default_factory=list)
+    usedWebSearch: bool = False
+    internalCount: int = 0
+    webCount: int = 0
+
+
 class PatientSummaryRequest(BaseModel):
     patientId: str
     patientContext: Optional[PatientContext] = None
@@ -506,6 +536,7 @@ async def health():
         "service": "c3a-core-ai",
         "model": model_status,
         "rag": rag_retriever.status(),
+        "web_search": web_search_service.status(),
         "database_context": db_context_retriever.status(),
         "speech": speech_status,
         "debug": {
@@ -970,6 +1001,63 @@ async def rag_search(req: RagSearchRequest):
     )
     logger.debug("AI POST /ai/rag/search response=%s", preview_object(payload))
     return payload
+
+
+@app.post("/ai/training/task-materials", response_model=TaskMaterialsResponse)
+async def task_materials(req: TaskMaterialsRequest):
+    query = " ".join(part for part in [req.taskLabel, req.taskDetail] if part and part.strip()).strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="taskLabel must not be empty")
+
+    logger.info("AI POST /ai/training/task-materials received query_preview=%r", _preview(query))
+
+    internal_chunks: list[RetrievedChunk] = []
+    if rag_retriever.is_configured:
+        internal_chunks = await rag_retriever.retrieve(query)
+    strong_internal = [chunk for chunk in internal_chunks if chunk.score >= TASK_MATERIALS_MIN_SCORE]
+
+    items = [
+        TaskMaterialItem(
+            sourceType="internal",
+            title=_source_label(chunk),
+            snippet=_query_preview(chunk.text, query),
+            documentTitle=chunk.source_title or None,
+            section=chunk.section_heading or None,
+            pageLabel=chunk.page_label(),
+            score=chunk.score,
+        )
+        for chunk in strong_internal
+    ]
+
+    used_web_search = False
+    web_count = 0
+    if len(strong_internal) < TASK_MATERIALS_MIN_INTERNAL_RESULTS:
+        web_results = await web_search_service.search(query, max_results=TASK_MATERIALS_WEB_MAX_RESULTS)
+        web_count = len(web_results)
+        used_web_search = bool(web_results)
+        items.extend(
+            TaskMaterialItem(
+                sourceType="web",
+                title=result.title,
+                snippet=result.snippet,
+                url=result.url,
+            )
+            for result in web_results
+        )
+
+    logger.info(
+        "AI POST /ai/training/task-materials completed internal=%s web=%s used_web_search=%s",
+        len(strong_internal),
+        web_count,
+        used_web_search,
+    )
+    return TaskMaterialsResponse(
+        query=query,
+        items=items,
+        usedWebSearch=used_web_search,
+        internalCount=len(strong_internal),
+        webCount=web_count,
+    )
 
 
 async def _retrieve_for_chat(query: str) -> list[RetrievedChunk]:

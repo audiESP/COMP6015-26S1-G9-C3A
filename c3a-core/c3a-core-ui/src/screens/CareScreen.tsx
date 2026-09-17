@@ -18,6 +18,7 @@ import { FinishVisitFormModal, TranslationTab, PatientDetailsPanel, VisitSummary
 import { TrainingScreen } from './TrainingScreen';
 import { Badge, Button, Copy, Field, Header, Heading, IconButton, Notice, Options, Section, Sheet, Surface, useReducedMotion } from '../ui/primitives';
 import { SwipeTask } from '../ui/SwipeTask';
+import { TaskTrainingMaterials } from '../ui/TaskTrainingMaterials';
 import tw from '../ui/tw';
 import '../i18n';
 
@@ -164,7 +165,7 @@ export function CareScreen() {
                 <Section title={closed ? 'Visit complete' : !started ? 'Before you begin' : 'Your next step'} detail={`${completed.length} / ${s.tasks.length}`} />
                 <Surface><Badge>{closed ? 'Closed' : started ? 'Current task' : 'Arrival'}</Badge><View style={tw`mt-3 mb-2`}><Heading>{closed ? 'Care recorded for this visit' : !started ? 'Start when you arrive' : currentTask?.label ?? 'Review and finish'}</Heading></View><Copy muted>{closed ? 'Your visit and location records are available below.' : !started ? 'Confirm identity and record your arrival location.' : currentTask?.detail ?? 'Check the care outcomes and follow-up arrangements.'}</Copy><View style={tw`mt-4`}><Button label={closed ? 'View record' : !started ? 'Start visit' : currentTask ? currentTask.type === 'medication' ? 'Record medication support' : 'Record this task' : 'Review and finish'} disabled={locked} onPress={() => closed ? navigate('summary') : !started ? open('arrival') : currentTask ? selectTask(currentTask) : setFinishOpen(true)} /></View></Surface>
                 <Section title="Care checklist" detail="Swipe left for actions" />
-                {outstanding.map(t => <SwipeTask key={t.id} task={t} index={s.tasks.indexOf(t)} disabled={locked || !!closed} onRecord={() => selectTask(t)} onIssue={() => selectTask(t, true)} />)}
+                {outstanding.map(t => <View key={t.id}><SwipeTask task={t} index={s.tasks.indexOf(t)} disabled={locked || !!closed} onRecord={() => selectTask(t)} onIssue={() => selectTask(t, true)} /><TaskTrainingMaterials task={t} disabled={locked || !!closed} /></View>)}
                 <Pressable accessibilityRole="button" accessibilityState={{ expanded: expandedDone }} onPress={() => setExpandedDone(!expandedDone)} style={tw`py-4 flex-row items-center gap-2`}><ChevronDown size={16} color="#697C75" /><Copy muted small>{completed.length} completed tasks</Copy></Pressable>
                 {expandedDone && completed.map(t => <View key={t.id} style={tw`mb-2 p-4 bg-care-soft rounded-control`}><Copy>{t.label}</Copy>{!!t.note && <Copy small muted>{t.note}</Copy>}</View>)}
                 {started && !closed && <Button label="Care outcomes and report" secondary disabled={locked || outstanding.some(t => t.status === 'pending' && t.type !== 'documentation')} onPress={() => setFinishOpen(true)} />}

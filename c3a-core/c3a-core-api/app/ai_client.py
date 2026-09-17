@@ -16,6 +16,8 @@ from .schemas import (
     ChatRequest,
     RiskAnalysisRequest,
     RiskAnalysisResponse,
+    TaskMaterialsRequest,
+    TaskMaterialsResponse,
     TranslationRequest,
     SpeechTranscriptionResponse,
 )
@@ -275,6 +277,53 @@ class AiClient:
                 "AI client translate failed request_id=%s elapsed_ms=%.1f error=%s",
                 request_id,
                 (time.perf_counter() - started_at) * 1000,
+                exc,
+                exc_info=True,
+            )
+            raise AiServiceUnavailable(f"AI service is unavailable: {exc}") from exc
+
+    async def task_materials(
+        self,
+        request: TaskMaterialsRequest,
+        request_id: str | None = None,
+    ) -> TaskMaterialsResponse:
+        started_at = time.perf_counter()
+        self.logger.info(
+            "AI client task materials started base_url=%s request_id=%s task_label=%r",
+            self.base_url,
+            request_id,
+            request.taskLabel,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/ai/training/task-materials",
+                    json=request.model_dump(exclude_none=True),
+                    headers=_request_headers(request_id),
+                )
+                response.raise_for_status()
+                payload = response.json()
+                self.logger.info(
+                    "AI client task materials completed request_id=%s status=%s elapsed_ms=%.1f",
+                    request_id,
+                    response.status_code,
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return TaskMaterialsResponse.model_validate(payload)
+        except httpx.HTTPStatusError as exc:
+            self.logger.error(
+                "AI client task materials http error request_id=%s status=%s body=%r",
+                request_id,
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
+            raise AiServiceUnavailable(
+                f"AI service returned HTTP {exc.response.status_code}: {exc.response.text}"
+            ) from exc
+        except Exception as exc:
+            self.logger.error(
+                "AI client task materials failed request_id=%s error=%s",
+                request_id,
                 exc,
                 exc_info=True,
             )

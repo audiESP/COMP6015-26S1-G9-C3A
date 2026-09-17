@@ -425,3 +425,28 @@ class TrainingSearchResult(TrainingMaterial):
 
 class TrainingSearchResponse(BaseModel):
     results: list[TrainingSearchResult]
+
+
+class TaskMaterialsRequest(BaseModel):
+    taskLabel: str
+    taskDetail: Optional[str] = None
+    taskType: Optional[str] = None
+
+
+class TaskMaterialItem(BaseModel):
+    sourceType: Literal["internal", "web"]
+    title: str
+    snippet: str
+    url: Optional[str] = None
+    documentTitle: Optional[str] = None
+    section: Optional[str] = None
+    pageLabel: Optional[str] = None
+    score: Optional[float] = None
+
+
+class TaskMaterialsResponse(BaseModel):
+    query: str
+    items: list[TaskMaterialItem] = Field(default_factory=list)
+    usedWebSearch: bool = False
+    internalCount: int = 0
+    webCount: int = 0

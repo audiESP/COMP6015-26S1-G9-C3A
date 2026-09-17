@@ -393,6 +393,25 @@ export interface TrainingSearchResult extends TrainingMaterial {
   topicSlug: string;
 }
 
+export interface TaskMaterialItem {
+  sourceType: 'internal' | 'web';
+  title: string;
+  snippet: string;
+  url?: string;
+  documentTitle?: string;
+  section?: string;
+  pageLabel?: string;
+  score?: number;
+}
+
+export interface TaskMaterialsResponse {
+  query: string;
+  items: TaskMaterialItem[];
+  usedWebSearch: boolean;
+  internalCount: number;
+  webCount: number;
+}
+
 export interface SpeechTranscriptionResponse {
   transcript: string;
   sourceLanguage: string;
