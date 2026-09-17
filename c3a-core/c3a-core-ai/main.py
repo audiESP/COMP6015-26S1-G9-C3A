@@ -1032,7 +1032,17 @@ async def task_materials(req: TaskMaterialsRequest):
     used_web_search = False
     web_count = 0
     if len(strong_internal) < TASK_MATERIALS_MIN_INTERNAL_RESULTS:
-        web_results = await web_search_service.search(query, max_results=TASK_MATERIALS_WEB_MAX_RESULTS)
+        # The full label+detail sentence often contains generic instructional
+        # words (e.g. "Check", "Review", "Confirm") that derail a web search
+        # engine into literal keyword matches unrelated to the task (e.g. TSA
+        # PreCheck for "...Check walker use..."). Embeddings-based internal
+        # RAG retrieval above doesn't have this problem, so it keeps using the
+        # full detail; the web query instead uses just the task label plus a
+        # fixed context phrase, which anchors ambiguous short labels (e.g.
+        # "Support lunch routine") toward aged-care sources instead of
+        # generic/unrelated ones.
+        web_query = f"{req.taskLabel.strip()} for aged care home visits"
+        web_results = await web_search_service.search(web_query, max_results=TASK_MATERIALS_WEB_MAX_RESULTS)
         web_count = len(web_results)
         used_web_search = bool(web_results)
         items.extend(
