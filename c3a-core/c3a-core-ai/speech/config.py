@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+DEFAULT_WHISPER_CPP_MODEL = Path.home() / ".c3a/models/whisper.cpp/ggml-medium.bin"
+
+
 def _enabled(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -32,7 +35,9 @@ class SpeechSettings:
             tokens=Path(os.getenv("SPEECH_ASR_TOKENS", "")),
             vad_model=Path(os.getenv("SPEECH_VAD_MODEL", "")),
             whisper_cpp_binary=Path(os.getenv("SPEECH_WHISPER_CPP_BINARY", "")),
-            whisper_cpp_model=Path(os.getenv("SPEECH_WHISPER_CPP_MODEL", "")),
+            whisper_cpp_model=Path(
+                os.getenv("SPEECH_WHISPER_CPP_MODEL", str(DEFAULT_WHISPER_CPP_MODEL))
+            ),
             num_threads=int(os.getenv("SPEECH_NUM_THREADS", "2")),
             max_duration_seconds=int(os.getenv("SPEECH_MAX_DURATION_SECONDS", "20")),
             max_upload_bytes=int(os.getenv("SPEECH_MAX_UPLOAD_BYTES", "10485760")),

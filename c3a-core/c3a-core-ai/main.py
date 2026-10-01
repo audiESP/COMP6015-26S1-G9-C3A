@@ -521,6 +521,7 @@ def _rag_payload(chunks, query: str = "") -> dict[str, Any]:
                 "score": chunk.score,
                 "doc_type": chunk.doc_type,
                 "text_preview": _query_preview(chunk.text, query),
+                "evidence_excerpt": _rag_evidence_text(chunk),
             }
             for chunk in chunks
         ]
@@ -657,14 +658,18 @@ async def chat(req: AiChatRequest):
     combined_context = prepared.combined_context
 
     generation_started_at = time.perf_counter()
-    try:
-        reply = await service.generate_reply(
-            **_generation_kwargs(req, prepared),
-        )
-    except UnsupportedAttachmentError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except OllamaServiceError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    direct_reply = _current_record_reply(req) or _factual_record_reply(req)
+    if direct_reply is not None:
+        reply = direct_reply
+    else:
+        try:
+            reply = await service.generate_reply(
+                **_generation_kwargs(req, prepared),
+            )
+        except UnsupportedAttachmentError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OllamaServiceError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     logger.info(
         "AI POST /ai/chat completed initial_route=%s effective_route=%s ambiguity_resolved_by=%s rag_retrieved=%s rag_accepted=%s rag_elapsed_ms=%.1f db_context_used=%s db_context_elapsed_ms=%.1f db_result_counts=%s generation_elapsed_ms=%.1f total_elapsed_ms=%.1f reply_chars=%s",
         initial_route.mode,
@@ -696,10 +701,13 @@ async def chat(req: AiChatRequest):
             "route": _route_payload(prepared),
         }
     )
+    if direct_reply is not None:
+        rag_payload["used_for_chat"] = False
+        rag_payload["answer_method"] = "structured_current_record"
     response = AiChatResponse(
         reply=reply,
-        sources=_source_labels(accepted_rag_chunks),
-        sourceReferences=_source_references(req, prepared),
+        sources=[] if direct_reply is not None else _source_labels(accepted_rag_chunks),
+        sourceReferences=_current_record_sources(req) if direct_reply is not None else _source_references(req, prepared),
         rag=rag_payload,
         model=service.status(),
     )
@@ -758,26 +766,32 @@ async def analyse_risk(req: RiskAnalysisRequest):
 async def chat_stream(req: AiChatRequest):
     started_at = time.perf_counter()
     prepared = await _prepare_chat(req)
+    direct_reply = _current_record_reply(req) or _factual_record_reply(req)
 
     async def event_stream():
         generation_started_at = time.perf_counter()
         reply_chars = 0
         try:
-            async for chunk in service.stream_reply(**_generation_kwargs(req, prepared)):
-                reply_chars += len(chunk)
-                yield _ndjson({"type": "token", "content": chunk})
-            sources = _source_labels(prepared.accepted_rag_chunks)
+            if direct_reply is not None:
+                reply_chars = len(direct_reply)
+                yield _ndjson({"type": "token", "content": direct_reply})
+            else:
+                async for chunk in service.stream_reply(**_generation_kwargs(req, prepared)):
+                    reply_chars += len(chunk)
+                    yield _ndjson({"type": "token", "content": chunk})
+            sources = [] if direct_reply is not None else _source_labels(prepared.accepted_rag_chunks)
             yield _ndjson(
                 {
                     "type": "done",
                     "sources": sources,
                     "sourceReferences": [
                         item.model_dump(exclude_none=True)
-                        for item in _source_references(req, prepared)
+                        for item in (_current_record_sources(req) if direct_reply is not None else _source_references(req, prepared))
                     ],
                     "appendSources": bool(sources),
                     "route": _route_payload(prepared),
                     "model": service.status(),
+                    "answerMethod": "structured_current_record" if direct_reply is not None else "model",
                 }
             )
             logger.info(
@@ -902,7 +916,8 @@ async def _prepare_chat(req: AiChatRequest) -> PreparedChat:
 def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, Any]:
     return {
         "messages": [(message.role, message.content) for message in req.messages],
-        "patient": req.patientContext if prepared.effective_route.uses_db else None,
+        # Supplied visit context is independent of whether PostgreSQL was queried.
+        "patient": req.patientContext,
         "worker": req.workerContext,
         "visit": req.visitContext,
         "current_task": req.currentTaskContext,
@@ -915,6 +930,191 @@ def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, 
         "rag_context": prepared.combined_context,
         "response_word_limit": req.responseWordLimit if req.responseWordLimit and req.responseWordLimit > 0 else None,
     }
+
+
+def _is_current_record_refresh(text: str) -> bool:
+    lowered = text.casefold()
+    return bool(
+        re.search(r"\b(?:linked|patient|current|updated) record\b", lowered)
+        and re.search(r"\b(?:updated|now|current|latest)\b", lowered)
+    ) or ("记录" in text and any(word in text for word in ("更新", "最新", "现在")))
+
+
+def _current_record_reply(req: AiChatRequest) -> str | None:
+    """Answer narrow current-state refreshes from this request's structured facts.
+
+    Earlier assistant text is not an earlier structured record. We therefore
+    report the current value, never infer which field changed from that text.
+    """
+    user_turns = [message.content for message in req.messages if message.role == "user"]
+    if len(user_turns) < 2 or not _is_current_record_refresh(user_turns[-1]):
+        return None
+    latest = user_turns[-1].casefold()
+    if (re.search(r"\b(?:what should i do|how should i|advise|recommend|next steps)\b", latest)
+            or any(term in latest for term in ("怎么做", "怎么办", "建议"))):
+        return None
+    original = next((text for text in reversed(user_turns[:-1])
+                     if not _is_current_record_refresh(text)), None)
+    if not original:
+        return None
+    question = original.casefold()
+    patient = req.patientContext
+    answer: str | None = None
+    if "medication support" in question or "medicine support" in question:
+        support = req.medicationSupportContext
+        if support and support.status:
+            names = ", ".join(support.medicationNames)
+            answer = f"The current medication-support outcome is {support.status}."
+            if names:
+                answer += f" The support record lists {names}."
+            answer += " This status alone does not confirm that any medicine was taken."
+    elif any(term in question for term in ("risk", "alert", "delirium", "falls")):
+        if req.riskContext is not None:
+            active = [risk for risk in req.riskContext
+                      if (risk.status or "active").casefold() not in {"resolved", "dismissed"}]
+            historical = [risk for risk in req.riskContext
+                          if (risk.status or "active").casefold() in {"resolved", "dismissed"}]
+            if active:
+                answer = "Current active risk alerts: " + "; ".join(
+                    f"{risk.title or risk.riskType or 'Unlabelled alert'} ({risk.status or 'active'})"
+                    for risk in active) + "."
+            else:
+                answer = "No active risk alert is recorded in the supplied current context."
+            if historical:
+                answer += " Historical alerts: " + "; ".join(
+                    f"{risk.title or risk.riskType or 'Unlabelled alert'} ({risk.status})"
+                    for risk in historical) + "."
+    elif any(term in question for term in ("mobility", "walker", "wheelchair", "walking", "transfer")):
+        if patient and patient.mobilitySupport:
+            answer = f"The current record lists mobility support as {patient.mobilitySupport}."
+    elif "task" in question:
+        task = req.currentTaskContext
+        if task and task.status:
+            answer = f"The current task is {task.status}."
+            if task.label:
+                answer += f" Task: {task.label}."
+    elif any(term in question for term in ("communication", "interpreter", "language")):
+        if patient:
+            facts = []
+            if patient.preferredLanguage:
+                facts.append(f"preferred language: {patient.preferredLanguage}")
+            if patient.interpreterRequired is True:
+                facts.append("interpreter marked required")
+            elif patient.interpreterRequired is False:
+                facts.append("interpreter not marked required")
+            if patient.communicationNotes and patient.communicationNotes != "No special communication note.":
+                facts.append(f"communication notes: {patient.communicationNotes}")
+            if facts:
+                answer = "The current record says " + "; ".join(facts) + "."
+    elif "allerg" in question:
+        if patient and patient.allergies is not None:
+            answer = ("The current record lists these allergies: " + ", ".join(patient.allergies) + "."
+                      if patient.allergies else "No allergy is recorded in the supplied current record.")
+    elif any(term in question for term in ("medicine", "medication", "drug")):
+        if patient and patient.medications is not None:
+            answer = ("The current record lists these medicines: " + ", ".join(patient.medications) + "."
+                      if patient.medications else "No medicine is recorded in the supplied current record.")
+    if answer and re.search(r"\b(?:what changed|which fields changed|difference|compare)\b", user_turns[-1].casefold()):
+        answer = "An earlier structured record was not supplied, so I cannot verify the exact change. " + answer
+    return answer
+
+
+def _factual_record_reply(req: AiChatRequest) -> str | None:
+    """Answer narrowly phrased record questions without inferring missing facts.
+
+    This path intentionally excludes advice, documentation instructions, and
+    broad summaries: those still need the normal generation path.
+    """
+    user_turns = [message.content for message in req.messages if message.role == "user"]
+    if len(user_turns) != 1:
+        return None
+    question = user_turns[0].strip().casefold()
+    if not question or any(term in question for term in (
+        "how should", "what should", "advise", "recommend", "plan ", "summarize", "explain", "why ",
+    )):
+        return None
+    patient = req.patientContext
+    support = req.medicationSupportContext
+    if any(term in question for term in ("medication support", "medicine support")):
+        if "took" in question or "taken" in question or "administered" in question:
+            return _medication_ingestion_reply(support)
+        if any(term in question for term in ("outcome", "status", "recorded")):
+            if not support or not support.status:
+                return "The medication-support outcome is not established in the supplied record."
+            answer = f"The recorded medication-support outcome is {support.status}."
+            if support.medicationNames:
+                answer += " The support record lists " + ", ".join(support.medicationNames) + "."
+            return answer + " This support status alone does not confirm whether medicine was taken."
+    if ("took" in question or "taken" in question or "administered" in question) and any(
+        term in question for term in ("medicine", "medication", "drug")
+    ):
+        return _medication_ingestion_reply(support)
+    if "interpreter" in question and any(term in question for term in ("require", "needed", "need ")):
+        if not patient or patient.interpreterRequired is None:
+            return "The supplied record does not establish whether this patient requires an interpreter."
+        return ("Interpreter support is marked required in the supplied record."
+                if patient.interpreterRequired else
+                "Interpreter support is marked not required in the supplied record.")
+    if "communication support" in question or "communication preference" in question:
+        if not patient:
+            return "No linked patient communication record was supplied, so the patient-specific support is unknown."
+        facts = []
+        if patient.preferredLanguage:
+            facts.append(f"preferred language: {patient.preferredLanguage}")
+        if patient.interpreterRequired is not None:
+            facts.append("interpreter required: " + ("yes" if patient.interpreterRequired else "no"))
+        if patient.communicationNotes and patient.communicationNotes != "No special communication note.":
+            facts.append(f"communication notes: {patient.communicationNotes.rstrip('.')}")
+        return ("The supplied record says " + "; ".join(facts) + "." if facts else
+                "No patient-specific communication preference is recorded in the supplied context.")
+    if "preferred language" in question:
+        return (f"The recorded preferred language is {patient.preferredLanguage}."
+                if patient and patient.preferredLanguage else
+                "The patient's preferred language is not established in the supplied record.")
+    if ("medicine" in question or "medication" in question) and not any(
+        term in question for term in ("risk", "alert", "support", "task", "visit")
+    ):
+        if "recorded" in question and support is None:
+            if not patient or patient.medications is None:
+                return "The patient's medicines are not established in the supplied record."
+            return ("The record lists these medicines: " + ", ".join(patient.medications) +
+                    ". This list does not confirm they were taken." if patient.medications else
+                    "No medicine is listed in the supplied patient record; this does not establish whether any was taken.")
+    if "allerg" in question and "recorded" in question:
+        if not patient or patient.allergies is None:
+            return "The patient's allergy status is not established in the supplied record."
+        return ("The record lists these allergies: " + ", ".join(patient.allergies) + "."
+                if patient.allergies else "No allergy is listed in the supplied patient record.")
+    if "mobility support" in question and "recorded" in question:
+        return (f"The recorded mobility support is {patient.mobilitySupport}."
+                if patient and patient.mobilitySupport else
+                "The patient's mobility support is not established in the supplied record.")
+    if "which patient" in question and "linked" in question:
+        return (f"The linked patient is {patient.name}." if patient and patient.name else
+                "No patient identity is established by the supplied context.")
+    return None
+
+
+def _medication_ingestion_reply(support: MedicationSupportContext | None) -> str:
+    items = support.medicationItems if support else None
+    confirmed = [item for item in (items or []) if str(item.get("takenStatus", "")).casefold() in
+                 {"taken", "administered", "yes", "confirmed"}]
+    if confirmed:
+        names = [str(item.get("name") or item.get("medicationName") or "medicine") for item in confirmed]
+        return "Item-level taken status confirms: " + ", ".join(names) + "."
+    return ("The supplied medication-support record does not confirm whether the medicine was taken. "
+            "A support outcome or medicine list alone is not proof of ingestion.")
+
+
+def _current_record_sources(req: AiChatRequest) -> list[SourceReference]:
+    context_types = _supplied_context_types(req, True)
+    if not context_types:
+        return []
+    return [SourceReference(
+        id="visit-context", kind="visit_context", label="Current supplied record",
+        reason="Answer computed from the structured context supplied with this request.",
+        recordTypes=context_types,
+    )]
 
 
 def _route_payload(prepared: PreparedChat) -> dict[str, Any]:
@@ -1201,8 +1401,10 @@ def _missing_context_instruction(source: str) -> str:
     if source == "database":
         return (
             "## Missing PostgreSQL Synthetic Patient Context\n"
-            "No reliable synthetic patient database rows were retrieved for this question. "
-            "Do not invent patient-specific facts. If helpful, provide general clinical or care-work context and clearly state that no matching synthetic patient record was found."
+            "No matching PostgreSQL rows were retrieved for this question. "
+            "If structured patient or visit facts were supplied in this request, use those facts; "
+            "the absent database row does not invalidate them. Do not invent additional patient facts. "
+            "Only say the patient-specific answer is unknown when neither the supplied context nor a linked record establishes it."
         )
     return (
         "## Missing Clinical Evidence\n"
@@ -1217,9 +1419,7 @@ def _build_chat_rag_context(chunks: list[RetrievedChunk]) -> str:
 
     evidence_blocks = []
     for index, chunk in enumerate(chunks, start=1):
-        text = " ".join(chunk.text.split())
-        if len(text) > CHAT_RAG_MAX_CHARS_PER_CHUNK:
-            text = f"{text[:CHAT_RAG_MAX_CHARS_PER_CHUNK].rstrip()}..."
+        text = _rag_evidence_text(chunk)
         evidence_blocks.append(
             "\n".join(
                 [
@@ -1232,13 +1432,21 @@ def _build_chat_rag_context(chunks: list[RetrievedChunk]) -> str:
 
     return (
         "## Retrieved Clinical Evidence\n"
-        "You must answer primarily from the retrieved evidence below, not from generic medical knowledge. "
+        "Use retrieved evidence below only for claims it directly supports; the supplied patient and workflow fields remain the source for individual facts. "
         "Use the exact care pathway, warning signs, actions, or limits described in these sources when they are relevant. "
         "If the retrieved evidence is only partially relevant, say that clearly and separate evidence-based points from general clinical context. "
         "For care-worker questions, give a direct answer first, then 3-5 practical actions or signs, and include escalation/red-flag advice. "
         "Refer to evidence using labels such as [Source 1] when relevant.\n\n"
         + "\n\n".join(evidence_blocks)
     )
+
+
+def _rag_evidence_text(chunk: RetrievedChunk) -> str:
+    """Return the exact excerpt passed to the generator for this chunk."""
+    text = " ".join(chunk.text.split())
+    if len(text) > CHAT_RAG_MAX_CHARS_PER_CHUNK:
+        return f"{text[:CHAT_RAG_MAX_CHARS_PER_CHUNK].rstrip()}..."
+    return text
 
 
 def _combine_contexts(*contexts: str) -> str:
@@ -1289,7 +1497,7 @@ def _source_references(req: AiChatRequest, prepared: PreparedChat) -> list[Sourc
             )
         )
 
-    context_types = _supplied_context_types(req, prepared.effective_route.uses_db)
+    context_types = _supplied_context_types(req, True)
     if context_types:
         references.append(
             SourceReference(
@@ -1333,7 +1541,7 @@ def _supplied_context_types(req: AiChatRequest, include_patient: bool) -> list[s
         (req.currentTaskContext is not None or bool(req.taskContext), "care tasks"),
         (req.medicationSupportContext is not None, "medication support record"),
         (bool(req.eventContext), "recent events"),
-        (bool(req.riskContext), "active risk alerts"),
+        (bool(req.riskContext), "risk alerts and their recorded statuses"),
         (bool(req.checklistContext), "incident checklist"),
     ]
     return [label for present, label in candidates if present]

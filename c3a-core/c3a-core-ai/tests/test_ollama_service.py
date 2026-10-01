@@ -158,6 +158,42 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Never answer, explain, advise", prompt)
         self.assertIn("rather than answering it", prompt)
 
+    async def test_translate_text_normalises_mandarin_to_simplified_chinese(self):
+        requests = []
+        service = None
+
+        def handler(request):
+            requests.append(request)
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "sourceLanguage": "English",
+                                "targetLanguage": "Mandarin",
+                                "translatedText": "你好。",
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                },
+            )
+
+        service = OllamaService(transport=httpx.MockTransport(handler))
+        result = await service.translate_text("Hello.", "Mandarin", "English")
+
+        payload = json.loads(requests[-1].content)
+        self.assertIn("Target language: Simplified Chinese (Mandarin)", payload["messages"][1]["content"])
+        self.assertEqual(payload["options"]["num_predict"], service.translation_num_predict)
+        self.assertEqual(result["targetLanguage"], "Simplified Chinese (Mandarin)")
+        self.assertEqual(result["translatedText"], "你好。")
+
     async def test_translate_text_rejects_non_json_model_answer(self):
         service = None
 
@@ -237,6 +273,7 @@ class OllamaMessageTest(unittest.TestCase):
         for heading in ["Current situation", "Steps", "Watch for", "Escalate when", "Sources"]:
             self.assertIn(heading, system_content)
         self.assertIn("only actions within the supplied worker's role", system_content)
+        self.assertIn("Earlier assistant replies are conversation history, not patient records", system_content)
         self.assertIn("Do not diagnose", system_content)
         self.assertIn("250 words or fewer", system_content)
 
@@ -283,6 +320,19 @@ class OllamaMessageTest(unittest.TestCase):
         self.assertIn("status: acknowledged", system_content)
         self.assertIn('"medication": "Warfarin"', system_content)
         self.assertIn("review note: Supervisor notified", system_content)
+
+    def test_resolved_risk_is_historical_and_medication_completion_is_not_ingestion(self):
+        messages = _build_ollama_messages(
+            [("user", "What active risk and medication outcome apply?")],
+            medication_support=SimpleNamespace(status="Completed", medicationNames=["Medicine A"]),
+            risks=[SimpleNamespace(title="Falls risk", level="moderate", message=None,
+                                   riskType="falls", status="resolved", details={}, reviewNote=None)],
+        )
+        system_content = messages[0]["content"]
+        self.assertIn("Task completion records support activity, not confirmed medicine ingestion", system_content)
+        self.assertIn("## Resolved or Dismissed Risk Alerts (historical only)", system_content)
+        self.assertNotIn("## Current Risk Alerts", system_content)
+        self.assertNotIn("Falls risk. None", system_content)
 
 
 if __name__ == "__main__":
