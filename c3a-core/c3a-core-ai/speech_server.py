@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 from speech.audio import AudioValidationError
 from speech.config import SpeechSettings
 from speech.service import SpeechService
+
+logger = logging.getLogger(__name__)
 
 speech_service = SpeechService(SpeechSettings.from_env())
 
@@ -53,5 +56,14 @@ async def transcribe(
     except AudioValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
+        # Keep the client response generic, but retain the original exception and
+        # traceback in the speech-service logs for diagnosis.
+        logger.exception(
+            "Speech transcription failed backend=%s model=%s content_type=%s audio_bytes=%d",
+            speech_service.backend,
+            speech_service.model_name,
+            audio.content_type or "unknown",
+            len(data),
+        )
         raise HTTPException(status_code=503, detail="Speech recognition service is unavailable") from exc
     return SpeechResult(transcript=transcript, model=speech_service.model_name, durationMs=duration_ms)

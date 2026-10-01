@@ -216,6 +216,9 @@ class DbContextRetriever:
         patient_id = _patient_id_from_context(patient_context) or _patient_id_from_query(query)
         if not intents:
             return DbContextResult(context="", metadata=metadata)
+        if patient_id is None and _is_patient_specific_query(query):
+            metadata["matched_intents"] = intents
+            return DbContextResult(context="", metadata=metadata)
 
         started_at = time.perf_counter()
         try:
@@ -257,6 +260,19 @@ class DbContextRetriever:
                     patient_id,
                     self.max_patients,
                 )
+                if patient_id and not patient_rows:
+                    return DbContextResult(
+                        context="",
+                        metadata={
+                            "enabled_for_chat": self.enabled,
+                            "used_for_chat": False,
+                            "configured": self.configured,
+                            "matched_intents": intents,
+                            "tables": ["c3a_synthea_patients"],
+                            "result_counts": {"patients": 0},
+                            "status": self.status(),
+                        },
+                    )
                 patient_ids = [str(row["id"]) for row in patient_rows]
                 if patient_id and patient_id not in patient_ids:
                     patient_ids = [patient_id]
@@ -276,7 +292,7 @@ class DbContextRetriever:
                     counts["patients"] = len(patient_rows)
 
                 if "cald_profiles" in intents:
-                    distribution_rows = self._run_query(
+                    distribution_rows = [] if patient_id else self._run_query(
                         "cald.distribution", _cald_distribution, cursor
                     )
                     if distribution_rows:
@@ -561,6 +577,10 @@ def _patient_id_from_context(patient_context: Any) -> str | None:
 def _patient_id_from_query(query: str) -> str | None:
     match = UUID_PATTERN.search(query)
     return _normalise_uuid(match.group(0)) if match else None
+
+
+def _is_patient_specific_query(query: str) -> bool:
+    return bool(re.search(r"\b(?:this|the|current) patient\b|\bpatient['’]s\b", query.casefold()))
 
 
 def _normalise_uuid(value: Any) -> str | None:

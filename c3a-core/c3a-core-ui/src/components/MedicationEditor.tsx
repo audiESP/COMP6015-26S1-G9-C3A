@@ -7,16 +7,28 @@ import tw from '../ui/tw';
 
 const takenOptions = ['Taken', 'Not Taken', 'Unable to Confirm'] as const;
 const supportOptions: MedicationSupportStatus[] = ['Completed', 'Delayed', 'Declined', 'Unavailable', 'Unable to Confirm'];
+
+function uniqueMedicationNames(medications: string[] | undefined): string[] {
+  const seen = new Set<string>();
+  return (medications ?? []).filter((medication) => {
+    const name = medication.trim();
+    const key = name.toLocaleLowerCase();
+    if (!name || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function MedicationEditor({ scenario, disabled, onSave, onSaved }: { scenario: ScenarioContext; disabled: boolean; onSave: (record: Omit<MedicationSupportRecord, 'id' | 'visitId'>) => Promise<unknown>; onSaved: () => void }) {
   const existing = scenario.medicationSupport;
-  const [items, setItems] = useState<MedicationSupportItem[]>(() => (scenario.patient.medications ?? []).map(name => existing?.medicationItems?.find(i => i.name === name) ?? { name }));
+  const [items, setItems] = useState<MedicationSupportItem[]>(() => uniqueMedicationNames(scenario.patient.medications).map(name => existing?.medicationItems?.find(i => i.name === name) ?? { name }));
   const [status, setStatus] = useState<MedicationSupportStatus | ''>(existing?.status ?? '');
   const [notes, setNotes] = useState(existing?.notes ?? '');
   const [open, setOpen] = useState(0);
   const [review, setReview] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setItems(old => (scenario.patient.medications ?? []).map(name => old.find(i => i.name === name) ?? { name })); }, [scenario.patient.medications]);
+  useEffect(() => { setItems(old => uniqueMedicationNames(scenario.patient.medications).map(name => old.find(i => i.name === name) ?? { name })); }, [scenario.patient.medications]);
   const valid = items.length > 0 && items.every(i => i.takenStatus) && !!status && (status === 'Completed' || !!notes.trim());
   const save = async () => {
     if (!valid || !confirmed || !status || disabled) return;
@@ -27,7 +39,7 @@ export function MedicationEditor({ scenario, disabled, onSave, onSaved }: { scen
   return <>
     <View style={tw`flex-row justify-between mb-3`}><Heading>Current medicines</Heading><Copy muted small>{items.filter(i => i.takenStatus).length} / {items.length}</Copy></View>
     {items.length === 0 && <Notice text="No medication list is available. Check the patient record before recording support." error />}
-    {items.map((item, index) => <View key={item.name} style={tw.style('bg-white rounded-card mb-3 border overflow-hidden', open === index ? 'border-care-primary' : 'border-care-line')}>
+    {items.map((item, index) => <View key={`${item.name}-${index}`} style={tw.style('bg-white rounded-card mb-3 border overflow-hidden', open === index ? 'border-care-primary' : 'border-care-line')}>
       <Pressable disabled={disabled} accessibilityRole="button" accessibilityState={{ expanded: open === index }} onPress={() => setOpen(open === index ? -1 : index)} style={tw`flex-row items-center gap-3 p-4 min-h-[76px]`}>
         {item.takenStatus ? <Check size={20} color="#176B58" /> : <Pill size={20} color="#697C75" />}
         <View style={tw`flex-1`}><Text style={tw`text-sm font-semibold text-care-ink`}>{item.name}</Text><Copy muted small>{item.takenStatus ?? 'Choose the observed status'}</Copy></View>{open === index ? <ChevronUp size={18} color="#697C75" /> : <ChevronDown size={18} color="#697C75" />}
@@ -41,7 +53,7 @@ export function MedicationEditor({ scenario, disabled, onSave, onSaved }: { scen
     <View style={tw`mt-3`}><Copy small muted>Recorded by {scenario.worker.name}. Your draft stays available during this visit.</Copy></View>
     <Sheet visible={review} title="Check medication record" onClose={() => setReview(false)} busy={disabled} footer={<Button label="Confirm and save" busy={disabled} disabled={!confirmed} onPress={() => void save()} />}>
       <Copy muted>{scenario.patient.name}</Copy>
-      {items.map(item => <View key={item.name} style={tw`py-3 border-b border-care-line gap-1`}><Text style={tw`text-sm text-care-ink`}>{item.name}</Text><Badge>{item.takenStatus}</Badge></View>)}
+      {items.map((item, index) => <View key={`${item.name}-${index}`} style={tw`py-3 border-b border-care-line gap-1`}><Text style={tw`text-sm text-care-ink`}>{item.name}</Text><Badge>{item.takenStatus}</Badge></View>)}
       <View style={tw`my-3`}><Copy>Support outcome: {status}</Copy>{!!notes && <Copy muted>{notes}</Copy>}</View>
       <Pressable disabled={disabled} accessibilityRole="checkbox" accessibilityState={{ checked: confirmed }} onPress={() => setConfirmed(!confirmed)} style={tw`flex-row items-center gap-3 py-3 min-h-[48px]`}><View style={tw.style('w-6 h-6 rounded-md border items-center justify-center', confirmed ? 'bg-care-primary border-care-primary' : 'border-care-line')}>{confirmed && <Check size={17} color="white" />}</View><View style={tw`flex-1`}><Copy>I have checked each medicine and the support outcome.</Copy></View></Pressable>
       <Notice text={error} error />

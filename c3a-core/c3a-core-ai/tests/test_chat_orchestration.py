@@ -159,6 +159,161 @@ class ChatOrchestrationTest(unittest.TestCase):
         for item in reversed(self.patches):
             item.stop()
 
+    def test_recorded_medicine_does_not_become_confirmed_ingestion(self):
+        payload = _chat_payload("What medicine is recorded for this patient?")
+        payload["patientContext"]["medications"] = ["Medicine A"]
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Medicine A", response.json()["reply"])
+        self.assertIn("does not confirm", response.json()["reply"])
+        self.assertEqual(response.json()["rag"]["answer_method"], "structured_current_record")
+        self.assertIsNone(self.service.last_messages)
+
+    def test_declined_support_does_not_prove_medicine_was_not_taken(self):
+        payload = _chat_payload("Can I say this patient took the recorded medicine?")
+        payload["medicationSupportContext"] = {"status": "Declined", "medicationNames": ["Medicine A"]}
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("does not confirm whether", response.json()["reply"])
+        self.assertNotIn("was not taken", response.json()["reply"])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_unknown_interpreter_flag_remains_unknown(self):
+        payload = _chat_payload("Is interpreter support required for this patient?")
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("does not establish whether", response.json()["reply"])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_missing_patient_context_does_not_invent_patient_fact(self):
+        response = self.client.post("/ai/chat", json=_chat_payload(
+            "What mobility support is recorded for this patient?", patient=False,
+        ))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("not established", response.json()["reply"])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_medication_alert_question_stays_on_risk_path(self):
+        payload = _chat_payload("What active medication-related alert is recorded for this patient?")
+        payload["riskContext"] = [{"title": "Medication concern", "status": "active"}]
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.json()["rag"].get("answer_method"), "structured_current_record")
+        self.assertIsNotNone(self.service.last_messages)
+
+    def test_updated_task_uses_current_structured_status_without_model(self):
+        payload = _chat_payload("What is the status of this patient's current task?")
+        payload["messages"] += [
+            {"role": "assistant", "content": "The task is pending."},
+            {"role": "user", "content": "This patient's linked record has been updated. What does it say now?"},
+        ]
+        payload["currentTaskContext"] = {"id": "task-1", "label": "Wellbeing", "status": "completed"}
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("completed", response.json()["reply"])
+        self.assertNotIn("pending", response.json()["reply"])
+        self.assertEqual(response.json()["rag"]["answer_method"], "structured_current_record")
+        self.assertEqual(response.json()["sources"], [])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_updated_medication_support_does_not_infer_ingestion(self):
+        payload = _chat_payload("What is this patient's recorded medication support outcome?")
+        payload["messages"] += [
+            {"role": "assistant", "content": "The support outcome was declined."},
+            {"role": "user", "content": "This patient's linked record has been updated. What does it say now?"},
+        ]
+        payload["medicationSupportContext"] = {"status": "Completed", "medicationNames": ["Medicine A"]}
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Completed", response.json()["reply"])
+        self.assertIn("does not confirm", response.json()["reply"])
+        self.assertNotIn("declined", response.json()["reply"])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_updated_resolved_risk_is_not_active(self):
+        payload = _chat_payload("Which active risk alert applies to this patient now?")
+        payload["messages"] += [
+            {"role": "assistant", "content": "Falls risk is active."},
+            {"role": "user", "content": "This patient's linked record has been updated. What does it say now?"},
+        ]
+        payload["riskContext"] = [{"title": "Falls risk", "status": "resolved"}]
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No active risk alert", response.json()["reply"])
+        self.assertIn("Falls risk (resolved)", response.json()["reply"])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_updated_absent_medicine_is_reported_as_not_recorded(self):
+        payload = _chat_payload("What medicine is recorded for this patient?")
+        payload["messages"] += [
+            {"role": "assistant", "content": "The patient is taking Medicine A."},
+            {"role": "user", "content": "For this patient, use only the current linked record. What is the answer now?"},
+        ]
+        payload["patientContext"]["medications"] = []
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No medicine is recorded", response.json()["reply"])
+        self.assertNotIn("Medicine A", response.json()["reply"])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_updated_mobility_and_interpreter_use_current_fields(self):
+        mobility = _chat_payload("What mobility support is recorded for this patient?")
+        mobility["messages"] += [
+            {"role": "assistant", "content": "The patient uses a wheelchair."},
+            {"role": "user", "content": "This patient's linked record has been updated. What does it say now?"},
+        ]
+        mobility["patientContext"]["mobilitySupport"] = "Independent walking"
+        response = self.client.post("/ai/chat", json=mobility)
+        self.assertIn("Independent walking", response.json()["reply"])
+        self.assertNotIn("wheelchair", response.json()["reply"])
+
+        communication = _chat_payload("Is an interpreter required for this patient?")
+        communication["messages"] += [
+            {"role": "assistant", "content": "Yes, an interpreter is required."},
+            {"role": "user", "content": "This patient's linked record has been updated. What does it say now?"},
+        ]
+        communication["patientContext"].update({"preferredLanguage": "Mandarin", "interpreterRequired": False})
+        response = self.client.post("/ai/chat", json=communication)
+        self.assertIn("not marked required", response.json()["reply"])
+        self.assertNotIn("not needed", response.json()["reply"])
+
+    def test_change_question_does_not_invent_old_structured_record(self):
+        payload = _chat_payload("What is the status of this patient's current task?")
+        payload["messages"] += [
+            {"role": "assistant", "content": "The task is pending."},
+            {"role": "user", "content": "What changed in the updated linked record?"},
+        ]
+        payload["currentTaskContext"] = {"status": "completed"}
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertIn("cannot verify the exact change", response.json()["reply"])
+        self.assertIn("completed", response.json()["reply"])
+
+    def test_updated_record_request_for_advice_still_uses_model(self):
+        payload = _chat_payload("What mobility support is recorded for this patient?")
+        payload["messages"] += [
+            {"role": "assistant", "content": "The patient uses a walker."},
+            {"role": "user", "content": "The linked record is updated. What should I do now?"},
+        ]
+        payload["patientContext"]["mobilitySupport"] = "Independent walking"
+        response = self.client.post("/ai/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(self.service.last_messages)
+        self.assertNotEqual(response.json()["rag"].get("answer_method"), "structured_current_record")
+
+    def test_updated_task_stream_uses_same_structured_answer(self):
+        payload = _chat_payload("What is the status of this patient's current task?")
+        payload["messages"] += [
+            {"role": "assistant", "content": "The task is pending."},
+            {"role": "user", "content": "This patient's linked record has been updated. What does it say now?"},
+        ]
+        payload["currentTaskContext"] = {"status": "completed"}
+        with self.client.stream("POST", "/ai/chat/stream", json=payload) as response:
+            events = [json.loads(line) for line in response.iter_lines() if line]
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("completed", events[0]["content"])
+        self.assertEqual(events[-1]["answerMethod"], "structured_current_record")
+        self.assertIsNone(self.service.last_messages)
+
     def test_database_only_does_not_call_rag(self):
         response = self.client.post(
             "/ai/chat",
@@ -252,7 +407,8 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertEqual(self.db.calls, 0)
         self.assertEqual(self.rag.calls, 1)
         self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "rag_only")
-        self.assertIsNone(self.service.last_patient)
+        self.assertIsNotNone(self.service.last_patient)
+        self.assertIn("patient profile", response.json()["sourceReferences"][-1]["recordTypes"])
 
     def test_hybrid_combines_db_and_rag_context(self):
         response = self.client.post(
@@ -374,7 +530,7 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertTrue(events[-1]["appendSources"])
         self.assertEqual(len(events[-1]["sources"]), 1)
         self.assertEqual(events[-1]["sourceReferences"][0]["kind"], "guideline")
-        self.assertIsNone(self.service.last_patient)
+        self.assertIsNotNone(self.service.last_patient)
 
     def test_uncertain_resolves_to_hybrid_when_both_sources_have_quality(self):
         response = self.client.post(

@@ -36,6 +36,40 @@ class DbContextRetrieverTest(unittest.IsolatedAsyncioTestCase):
 
         retrieve_sync.assert_called_once()
 
+    async def test_unlinked_this_patient_query_does_not_sample_other_patients(self):
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://configured"}):
+            retriever = DbContextRetriever()
+        with patch.object(retriever, "_retrieve_sync") as retrieve_sync:
+            result = await retriever.retrieve("What medicines does this patient take?")
+        retrieve_sync.assert_not_called()
+        self.assertFalse(result.metadata["used_for_chat"])
+
+    async def test_missing_patient_id_does_not_fall_back_to_sample_rows(self):
+        from contextlib import contextmanager
+        from unittest.mock import MagicMock
+
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://configured"}):
+            retriever = DbContextRetriever()
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+
+        @contextmanager
+        def fake_connection():
+            yield connection
+
+        with patch.object(retriever, "_connection", fake_connection), patch.object(
+            retriever, "_run_query", return_value=[]
+        ) as run_query:
+            result = retriever._retrieve_sync(
+                "What medicines does this patient take?",
+                PATIENT.id,
+                ["patients", "medications"],
+            )
+        self.assertEqual(run_query.call_count, 1)
+        self.assertEqual(result.context, "")
+        self.assertEqual(result.metadata["result_counts"], {"patients": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -862,7 +862,7 @@ class VisitRepository:
                 "communicationNotes": row["profile_communication_notes"] or row["communication_notes"],
                 "careRiskFlags": _list_or_default(row["profile_care_risk_flags"], row["care_risk_flags"]),
                 "allergies": _list_or_default(row["allergies_override"], row["allergies"]),
-                "medications": _list_or_default(row["medications_override"], row["medications"]),
+                "medications": _unique_strings(_list_or_default(row["medications_override"], row["medications"])),
                 "pastMedicalHistory": _first_or_join(row["conditions"]),
             }
         )
@@ -961,7 +961,7 @@ class VisitRepository:
             (visit_id,),
         )
         row = cursor.fetchone()
-        return _list_or_default(row["medications"] if row else [], [])
+        return _unique_strings(_list_or_default(row["medications"] if row else [], []))
 
     def _latest_visit_for_patient(self, cursor, patient_id: str) -> str | None:
         cursor.execute(
@@ -1067,7 +1067,7 @@ class VisitRepository:
                 "communicationNotes": row["profile_communication_notes"] or row["communication_notes"],
                 "careRiskFlags": _list_or_default(row["profile_care_risk_flags"], row["care_risk_flags"]),
                 "allergies": _list_or_default(row["allergies_override"], row["allergies"]),
-                "medications": _list_or_default(row["medications_override"], row["medications"]),
+                "medications": _unique_strings(_list_or_default(row["medications_override"], row["medications"])),
                 "pastMedicalHistory": _first_or_join(row["conditions"]),
             }
         )
@@ -1634,6 +1634,19 @@ def _list_or_default(primary: Any, fallback: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return []
+
+
+def _unique_strings(items: list[str]) -> list[str]:
+    """Keep the first occurrence of each non-empty value, case-insensitively."""
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in items:
+        value = str(item).strip()
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            unique.append(value)
+    return unique
 
 
 def _first_or_join(value: Any) -> str | None:
