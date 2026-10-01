@@ -144,6 +144,10 @@ class VisitQueueResponse(BaseModel):
     visits: list[VisitQueueItem]
 
 
+class VisitDatesResponse(BaseModel):
+    dates: list[str]
+
+
 class ScenarioResponse(BaseModel):
     worker: WorkerContext
     patient: PatientContext

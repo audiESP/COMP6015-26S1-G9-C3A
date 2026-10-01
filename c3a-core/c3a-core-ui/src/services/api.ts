@@ -263,6 +263,17 @@ export async function fetchVisitQueue(
   });
 }
 
+export async function fetchVisitDates(
+  workerId: string,
+  start: string,
+  end: string,
+): Promise<{ dates: string[] }> {
+  const query = new URLSearchParams({ start, end }).toString();
+  return requestJson(`/workers/${encodeURIComponent(workerId)}/visit-dates?${query}`, {
+    method: 'GET',
+  });
+}
+
 export async function fetchVisitScenario(
   visitId: string,
   workerId: string,

@@ -15,11 +15,14 @@ export function useScenarioStore() {
   const [date, setDate] = useState(process.env.EXPO_PUBLIC_SHIFT_DATE || localDate());
   const [scenario, setScenario] = useState<ScenarioContext | null>(null);
   const [visitQueue, setVisitQueue] = useState<VisitQueueItem[]>([]);
+  const [visitDates, setVisitDates] = useState<string[]>([]);
+  const [isCalendarLoading, setCalendarLoading] = useState(false);
   const [isLoading, setLoading] = useState(true);
   const [isSaving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saving = useRef(false);
   const request = useRef(0);
+  const calendarRequest = useRef(0);
   const current = useRef(scenario); current.current = scenario;
   const apply = useCallback((next: ScenarioContext) => {
     current.current = next;
@@ -42,6 +45,22 @@ export function useScenarioStore() {
     finally { if (seq === request.current) setLoading(false); }
   }, [date, apply]);
   useEffect(() => { void reload(); return () => { request.current++; }; }, [reload]);
+  const loadVisitDates = useCallback(async (month: string) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const [year, monthNumber] = month.split('-').map(Number);
+    const nextMonth = new Date(year, monthNumber, 1, 12);
+    const end = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+    const seq = ++calendarRequest.current;
+    setCalendarLoading(true);
+    try {
+      const response = await api.fetchVisitDates(workerId, `${month}-01`, end);
+      if (seq === calendarRequest.current) setVisitDates(response.dates);
+    } catch {
+      if (seq === calendarRequest.current) setVisitDates([]);
+    } finally {
+      if (seq === calendarRequest.current) setCalendarLoading(false);
+    }
+  }, []);
   const selectVisit = useCallback(async (id: string) => {
     if (saving.current) return false;
     const seq = ++request.current; setLoading(true); setError(null);
@@ -81,5 +100,5 @@ export function useScenarioStore() {
     return { ...base, source: 'gps', permissionStatus: 'granted', coords, accuracyMeters: position.coords.accuracy ?? undefined, distanceFromPlannedMeters: distance, withinExpectedArea: distance === undefined ? undefined : distance <= (s.visit.locationThresholdMeters ?? 150) };
   };
   const activeAlerts = useMemo(() => (scenario?.alerts ?? []).filter(a => !a.status || ['active', 'acknowledged'].includes(a.status)).sort((a, b) => ({ high: 0, moderate: 1, low: 2 }[a.level] - { high: 0, moderate: 1, low: 2 }[b.level])), [scenario]);
-  return { scenario, visitQueue, date, setDate, isLoading, isSaving, error, reload, selectVisit, activeAlerts, startVisit, completeVisit, updateTask, reportTaskIssue, updateMedicationSupport, updateAlert, updatePatient, locationSnapshot };
+  return { scenario, visitQueue, visitDates, loadVisitDates, isCalendarLoading, date, setDate, isLoading, isSaving, error, reload, selectVisit, activeAlerts, startVisit, completeVisit, updateTask, reportTaskIssue, updateMedicationSupport, updateAlert, updatePatient, locationSnapshot };
 }

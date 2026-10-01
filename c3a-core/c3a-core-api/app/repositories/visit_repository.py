@@ -73,6 +73,27 @@ class VisitRepository:
             with connection.cursor() as cursor:
                 return self._list_visit_queue(cursor, worker_id, shift_date)
 
+    def list_visit_dates(self, worker_id: str, start_date: date, end_date: date) -> list[str]:
+        if end_date <= start_date:
+            raise VisitValidationError("The end date must be after the start date")
+        if (end_date - start_date).days > 62:
+            raise VisitValidationError("The visit date range cannot exceed 62 days")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select distinct v.scheduled_at::date as visit_date
+                    from c3a_app_visits v
+                    where v.worker_id = %s
+                      and v.scheduled_at::date >= %s
+                      and v.scheduled_at::date < %s
+                      and v.status <> 'cancelled'
+                    order by visit_date
+                    """,
+                    (worker_id, start_date, end_date),
+                )
+                return [row["visit_date"].isoformat() for row in cursor.fetchall()]
+
     def get_scenario(
         self,
         visit_id: str,

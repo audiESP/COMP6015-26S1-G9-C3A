@@ -65,6 +65,7 @@ from app.schemas import (
     UpdatePatientProfileRequest,
     UploadRequest,
     UploadResponse,
+    VisitDatesResponse,
     VisitQueueResponse,
 )
 
@@ -237,6 +238,14 @@ async def task_materials(req: TaskMaterialsRequest, request: Request):
 def list_worker_visits(worker_id: str, date: date):
     try:
         return VisitQueueResponse(visits=visit_repository.list_visit_queue(worker_id, date))
+    except Exception as exc:
+        raise _visit_error(exc) from exc
+
+
+@app.get("/workers/{worker_id}/visit-dates", response_model=VisitDatesResponse)
+def list_worker_visit_dates(worker_id: str, start: date, end: date):
+    try:
+        return VisitDatesResponse(dates=visit_repository.list_visit_dates(worker_id, start, end))
     except Exception as exc:
         raise _visit_error(exc) from exc
 
