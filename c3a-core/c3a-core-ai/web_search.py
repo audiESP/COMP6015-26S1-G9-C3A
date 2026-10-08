@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -14,41 +16,94 @@ logger = logging.getLogger(__name__)
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
-# Video platforms return content that can't be skimmed or cited like an
-# article, so they are excluded from a clinical/care-work search.
-EXCLUDED_DOMAINS = ["youtube.com", "youtu.be", "tiktok.com", "vimeo.com"]
-
-# Australian government/health-authority and established clinical-education
-# domains. Results from this set are fetched with a dedicated, scoped Tavily
-# call so relevance is judged *within* this trusted set rather than by
-# reordering a general search by domain suffix (which promotes irrelevant
-# pages just because they happen to sit on a .gov host).
-TRUSTED_AU_DOMAINS = [
-    "healthdirect.gov.au",
-    "health.gov.au",
+# Results are only taken from these sites. Unscoped web search returned
+# off-topic pages (dictionaries, airport security, workplace lunch blogs), so
+# nothing outside this list is ever shown.
+TRUSTED_DOMAINS = [
     "agedcarequality.gov.au",
+    "health.gov.au",
     "safetyandquality.gov.au",
-    "nhmrc.gov.au",
-    "resus.org.au",
-    "anzcor.org",
-    "redcross.org.au",
-    "dementia.org.au",
-    "nps.org.au",
+    "healthdirect.gov.au",
     "betterhealth.vic.gov.au",
     "healthywa.wa.gov.au",
+    "health.vic.gov.au",
+    "aihw.gov.au",
+    "nhmrc.gov.au",
+    "nps.org.au",
+    "dementia.org.au",
     "carersaustralia.com.au",
+    "anmf.org.au",
     "palliativecare.org.au",
+    "resus.org.au",
+    "anzcor.org",
     "agedcare.royalcommission.gov.au",
 ]
 
-# Tavily returns a per-result relevance score (roughly 0-1). The trusted-domain
-# pass is scoped to a small curated site list, so when none of those sites
-# actually cover the topic, Tavily still returns its "least bad" match instead
-# of nothing. A score floor rejects those forced/weak matches instead of
-# surfacing an authoritative-but-irrelevant page (e.g. a resuscitation
-# guideline forced to match a routine medication-documentation query).
 MIN_TRUSTED_SCORE = float(os.getenv("TAVILY_TRUSTED_MIN_SCORE", "0.3"))
-MIN_GENERAL_SCORE = float(os.getenv("TAVILY_GENERAL_MIN_SCORE", "0.2"))
+
+# Trusted domains also host policy pages written for providers and regulators
+# (ministerial media releases, compliance, quality standards, submissions).
+# They match task topics well but give a care worker nothing to act on during
+# a visit, so URLs containing these fragments are dropped.
+EXCLUDED_URL_FRAGMENTS = (
+    "/ministers/",
+    "/media/",
+    "/news/",
+    "regulation",
+    "compliance",
+    "/providers/",
+    "/strengthened-quality-standards/",
+    "/national-standards/",
+    "/residential-aged-care/",
+    "for-racs",
+    "submission",
+    "campaign",
+    "position-statement",
+    "program-manual",
+    "scheme-guidelines",
+    "aihw.gov.au/reports/",
+)
+
+# Search queries phrased as "signs/symptoms + older people" return practical
+# observation guidance; queries phrased around the task or the worker ("check",
+# "for aged care home visits") return policy pages. Each topic is matched by
+# keywords in the task label and detail, in this priority order.
+TOPIC_QUERIES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("hydration", "nutrition", "dehydrat", "malnutrition"), "signs of dehydration and malnutrition in older people"),
+    (("appetite", "meal", "lunch", "eating"), "eating difficulties and loss of appetite in older people tips"),
+    (("swallow",), "swallowing difficulty signs in older people"),
+    (("confusion", "orientation", "orient", "delirium"), "signs of delirium and sudden confusion in older people"),
+    (("pain", "dizziness", "dizzy"), "pain and dizziness warning signs in older people"),
+    (("fall", "gait", "walker", "steady", "steadiness"), "preventing falls in older people at home walking aids"),
+    (("transfer",), "helping an older person stand up from a chair or bed safely"),
+    (("medication", "medicine"), "medication safety and adverse effects in older people at home"),
+    (("interpreter", "communication"), "communicating with older people from culturally diverse backgrounds"),
+    (("escalation", "unusual symptoms", "deteriorat"), "recognising and reporting deterioration in older people"),
+)
+
+# Used when no topic keyword matches, and always for task types whose details
+# mention other topics only in passing (a summary that records "nutrition" is
+# not a nutrition check).
+TYPE_QUERIES = {
+    "arrival": "communicating with older people from culturally diverse backgrounds",
+    "documentation": "recognising and reporting deterioration in older people",
+    "meal": "eating difficulties and loss of appetite in older people tips",
+    "medication": "medication safety and adverse effects in older people at home",
+    "mobility": "preventing falls in older people at home walking aids",
+    "wellbeing": "signs of dehydration and malnutrition in older people",
+}
+TYPE_ONLY_TASK_TYPES = {"arrival", "documentation"}
+MAX_TASK_QUERIES = 2
+
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b").strip()
+RELEVANCE_TIMEOUT_SECONDS = float(os.getenv("TASK_MATERIALS_RELEVANCE_TIMEOUT_SECONDS", "60"))
+
+RELEVANCE_PROMPT = """A home care worker is doing this task while visiting an older person at home: {task}
+Web page title: {title}
+Excerpt: {snippet}
+
+Would this page help the worker recognise warning signs, or decide what to do or report, during the visit? Answer NO if it is mainly about regulation, compliance, funding, provider obligations, policy, or running a residential facility. Reply YES or NO only."""
 
 
 @dataclass(frozen=True)
@@ -68,65 +123,45 @@ class WebSearchService:
     def is_configured(self) -> bool:
         return bool(self.api_key)
 
-    async def search(self, query: str, max_results: int = 3) -> list[WebSearchResult]:
-        if not self.is_configured or not query.strip():
+    async def search(self, queries: list[str], task_context: str, max_results: int = 3) -> list[WebSearchResult]:
+        queries = [query for query in queries if query.strip()]
+        if not self.is_configured or not queries:
             return []
 
-        seen_keys: set[str] = set()
-        results: list[WebSearchResult] = []
-
-        # Pass 1: search only trusted AU/health-authority domains. Tavily
-        # ranks relevance *within* this scope, so a result only appears if
-        # it's actually relevant to the query, not merely on a trusted host.
-        trusted = await self._raw_search(
-            query,
-            max_results=max_results,
-            include_domains=TRUSTED_AU_DOMAINS,
-            min_score=MIN_TRUSTED_SCORE,
+        per_query = await asyncio.gather(
+            *(self._trusted_search(query, max_results=max_results * 2) for query in queries)
         )
-        for item in trusted:
-            self._add_unique(item, results, seen_keys)
-            if len(results) >= max_results:
-                return results
-
-        # Pass 2: general web search to fill any remaining slots, in
-        # Tavily's own relevance order (no domain-based reordering).
-        remaining = max_results - len(results)
-        general = await self._raw_search(query, max_results=remaining + 2, min_score=MIN_GENERAL_SCORE)
-        for item in general:
-            self._add_unique(item, results, seen_keys)
-            if len(results) >= max_results:
-                break
-
-        return results
-
-    @staticmethod
-    def _add_unique(item: WebSearchResult, results: list[WebSearchResult], seen_keys: set[str]) -> None:
-        key = _dedupe_key(item.url)
-        if key in seen_keys:
-            return
-        seen_keys.add(key)
-        results.append(item)
-
-    async def _raw_search(
-        self,
-        query: str,
-        max_results: int,
-        include_domains: list[str] | None = None,
-        min_score: float = 0.0,
-    ) -> list[WebSearchResult]:
-        if max_results <= 0:
+        candidates = [item for item in _interleave(per_query) if not _is_excluded_url(item.url)]
+        if not candidates:
             return []
+
+        verdicts = await asyncio.gather(
+            *(self._is_relevant(task_context, item) for item in candidates)
+        )
+        kept: list[WebSearchResult] = []
+        seen_keys: set[str] = set()
+        for item, relevant in zip(candidates, verdicts):
+            if not relevant:
+                continue
+            key = _dedupe_key(item.url)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            kept.append(item)
+            if len(kept) >= max_results:
+                break
+        return kept
+
+    async def _trusted_search(self, query: str, max_results: int) -> list[WebSearchResult]:
         payload_body: dict[str, Any] = {
             "api_key": self.api_key,
             "query": query,
             "max_results": max_results,
-            "search_depth": "basic",
+            "search_depth": "advanced",
+            "chunks_per_source": 2,
             "include_answer": False,
-            "exclude_domains": EXCLUDED_DOMAINS,
+            "include_domains": TRUSTED_DOMAINS,
         }
-        if include_domains:
-            payload_body["include_domains"] = include_domains
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(TAVILY_SEARCH_URL, json=payload_body)
@@ -135,27 +170,40 @@ class WebSearchService:
             self._last_error = None
         except Exception as exc:
             self._last_error = str(exc)
-            logger.warning(
-                "Tavily web search failed query_preview=%r scoped=%s error=%s",
-                query[:120],
-                bool(include_domains),
-                exc,
-                exc_info=True,
-            )
+            logger.warning("Tavily web search failed query_preview=%r error=%s", query[:120], exc, exc_info=True)
             return []
 
         results = []
         for item in payload.get("results", []):
             title = (item.get("title") or "").strip()
             url = (item.get("url") or "").strip()
-            snippet = (item.get("content") or "").strip()
             score = item.get("score")
             if not url or not title:
                 continue
-            if isinstance(score, (int, float)) and score < min_score:
+            if isinstance(score, (int, float)) and score < MIN_TRUSTED_SCORE:
                 continue
-            results.append(WebSearchResult(title=title, url=url, snippet=snippet))
+            results.append(WebSearchResult(title=title, url=url, snippet=_clean_snippet(item.get("content") or "")))
         return results
+
+    async def _is_relevant(self, task_context: str, item: WebSearchResult) -> bool:
+        prompt = RELEVANCE_PROMPT.format(task=task_context, title=item.title, snippet=item.snippet)
+        try:
+            async with httpx.AsyncClient(timeout=RELEVANCE_TIMEOUT_SECONDS) as client:
+                response = await client.post(
+                    f"{OLLAMA_BASE_URL}/api/chat",
+                    json={
+                        "model": OLLAMA_MODEL,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "stream": False,
+                        "options": {"temperature": 0, "num_predict": 5},
+                    },
+                )
+                response.raise_for_status()
+                answer = response.json()["message"]["content"].strip().upper()
+        except Exception as exc:
+            logger.warning("Relevance check failed url=%s error=%s", item.url, exc)
+            return False
+        return answer.startswith("YES")
 
     def status(self) -> dict[str, Any]:
         return {
@@ -165,6 +213,53 @@ class WebSearchService:
         }
 
 
+SNIPPET_MAX_CHARS = 500
+
+
+def _clean_snippet(text: str) -> str:
+    cleaned = re.sub(r"(?m)^#{1,6}\s*", "", text.replace("[...]", " "))
+    compact = " ".join(cleaned.split())
+    if len(compact) <= SNIPPET_MAX_CHARS:
+        return compact
+    cut = compact[:SNIPPET_MAX_CHARS]
+    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    if end > SNIPPET_MAX_CHARS // 2:
+        return cut[: end + 1]
+    return cut.rstrip() + "..."
+
+
+def build_task_queries(label: str, detail: str | None = None, task_type: str | None = None) -> list[str]:
+    """Return up to MAX_TASK_QUERIES symptom-oriented web queries for a care task."""
+    normalized_type = (task_type or "").strip().lower()
+    queries: list[str] = []
+    if normalized_type not in TYPE_ONLY_TASK_TYPES:
+        text = f"{label} {detail or ''}".lower()
+        for keywords, query in TOPIC_QUERIES:
+            if query not in queries and any(keyword in text for keyword in keywords):
+                queries.append(query)
+            if len(queries) >= MAX_TASK_QUERIES:
+                return queries
+    if not queries and normalized_type in TYPE_QUERIES:
+        queries.append(TYPE_QUERIES[normalized_type])
+    if not queries and label.strip():
+        queries.append(f"{label.strip()} older people at home")
+    return queries
+
+
+def _interleave(result_lists: list[list[WebSearchResult]]) -> list[WebSearchResult]:
+    # Alternate between queries so one topic's results don't crowd out the other.
+    merged: list[WebSearchResult] = []
+    for rank in range(max((len(results) for results in result_lists), default=0)):
+        merged.extend(results[rank] for results in result_lists if rank < len(results))
+    return merged
+
+
+def _is_excluded_url(url: str) -> bool:
+    lowered = url.lower()
+    return any(fragment in lowered for fragment in EXCLUDED_URL_FRAGMENTS)
+
+
 def _dedupe_key(url: str) -> str:
     parts = urlsplit(url)
-    return f"{parts.hostname or ''}{parts.path.rstrip('/')}".lower()
+    host = (parts.hostname or "").removeprefix("www.")
+    return f"{host}{parts.path.rstrip('/')}".lower()

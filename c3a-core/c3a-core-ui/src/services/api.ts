@@ -520,7 +520,7 @@ export async function fetchTaskMaterials(
   return requestJson('/training/task-materials', {
     method: 'POST',
     body: JSON.stringify({ taskLabel, taskDetail, taskType }),
-  }, 30000);
+  }, 180000);
 }
 
 /**
