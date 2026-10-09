@@ -39,7 +39,7 @@ def load_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def judge(case: dict, result: dict, model: str, base_url: str, timeout: float) -> dict:
+def judge(case: dict, result: dict, model: str, base_url: str, timeout: float, num_predict: int = 640, bounded_tags: bool = False) -> dict:
     answer = result["response"]
     evidence = [
         {"label": f"Source {i}", "title": row.get("source_title"),
@@ -65,11 +65,14 @@ def judge(case: dict, result: dict, model: str, base_url: str, timeout: float) -
         },
         "required": ["scores", "reasons", "critical_errors", "uncertain"],
     }
+    if bounded_tags:
+        # Qwen2.5 can repeat one tag until the token cap; bound the list to the distinct tags.
+        schema["properties"]["critical_errors"] |= {"uniqueItems": True, "maxItems": len(TAGS)}
     response = requests.post(
         base_url.rstrip("/") + "/api/chat",
         json={
             "model": model, "stream": False, "format": schema,
-            "options": {"temperature": 0, "num_predict": 640, "num_ctx": 4096},
+            "options": {"temperature": 0, "num_predict": num_predict, "num_ctx": 4096},
             "messages": [
                 {"role": "system", "content": SYSTEM},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -103,6 +106,8 @@ def main() -> None:
     parser.add_argument("--model", default="llama3:latest")
     parser.add_argument("--base-url", default="http://127.0.0.1:11434")
     parser.add_argument("--timeout", type=float, default=240)
+    parser.add_argument("--num-predict", type=int, default=640, help="Output token cap; raise for judges with longer reasons")
+    parser.add_argument("--bounded-tags", action="store_true", help="Limit critical_errors to distinct tags (needed for Qwen2.5)")
     parser.add_argument("--limit", type=int, default=0, help="Zero means all; positive values are for preflight only")
     parser.add_argument("--case-ids", help="Comma-separated IDs for calibration only")
     parser.add_argument("--execute", action="store_true")
@@ -129,7 +134,7 @@ def main() -> None:
             try:
                 if result.get("http_status") != 200 or "response" not in result:
                     raise ValueError("missing successful assistant response")
-                record["verdict"] = judge(cases[case_id], result, args.model, args.base_url, args.timeout)
+                record["verdict"] = judge(cases[case_id], result, args.model, args.base_url, args.timeout, args.num_predict, args.bounded_tags)
                 validate_verdict(record["verdict"], cases[case_id])
             except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
                 record["error"] = f"{type(exc).__name__}: {str(exc)[:250]}"

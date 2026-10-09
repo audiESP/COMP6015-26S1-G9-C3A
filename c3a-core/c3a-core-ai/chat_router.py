@@ -162,6 +162,14 @@ GUIDELINE_PHRASES = {
     "what should we do",
 }
 
+RECORD_FIELD_PHRASES = {
+    "communication support",
+    "interpreter support",
+    "medication support",
+    "medicine support",
+    "mobility support",
+}
+
 WORKFLOW_ACTION_PHRASES = {
     "how should",
     "how to",
@@ -468,6 +476,9 @@ def _db_signals(words: set[str], lowered: str) -> list[str]:
 
 def _guideline_signals(words: set[str], lowered: str) -> list[str]:
     signals = []
+    if any(phrase in lowered for phrase in RECORD_FIELD_PHRASES):
+        # "medication support" etc. name a record field, not a request for guidance.
+        words = words - {"support"}
     if words & GUIDELINE_TERMS:
         signals.append("guideline_term")
     if any(phrase in lowered for phrase in GUIDELINE_PHRASES):

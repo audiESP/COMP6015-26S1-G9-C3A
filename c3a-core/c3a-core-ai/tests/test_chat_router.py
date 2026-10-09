@@ -102,6 +102,11 @@ class ChatRouterTest(unittest.TestCase):
         self.assertFalse(decision.uses_db)
         self.assertTrue(decision.uses_rag)
 
+    def test_medication_support_record_question_is_not_guidance(self):
+        decision = decide_route("What is this patient's recorded medication support outcome?", PATIENT)
+        self.assertNotIn("guideline_term", decision.matched_signals)
+        self.assertFalse(decision.uses_rag)
+
 
 if __name__ == "__main__":
     unittest.main()
