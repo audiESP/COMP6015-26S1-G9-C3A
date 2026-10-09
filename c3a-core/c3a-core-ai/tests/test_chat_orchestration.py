@@ -30,6 +30,7 @@ class FakeService:
         self.last_medication_support = None
         self.last_risks = None
         self.last_messages = None
+        self.stream_tokens = ["Safe ", "response [Source 1]."]
 
     def status(self):
         return {"model": "fake", "loaded": True}
@@ -50,8 +51,8 @@ class FakeService:
         self.last_medication_support = kwargs.get("medication_support")
         self.last_risks = kwargs.get("risks")
         self.last_messages = kwargs.get("messages")
-        yield "Safe "
-        yield "response."
+        for token in self.stream_tokens:
+            yield token
 
 
 class OverlapProbe:
@@ -190,7 +191,7 @@ class ChatOrchestrationTest(unittest.TestCase):
             "What mobility support is recorded for this patient?", patient=False,
         ))
         self.assertEqual(response.status_code, 200)
-        self.assertIn("not established", response.json()["reply"])
+        self.assertIn("cannot be determined", response.json()["reply"])
         self.assertIsNone(self.service.last_messages)
 
     def test_medication_alert_question_stays_on_risk_path(self):
@@ -526,7 +527,7 @@ class ChatOrchestrationTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([event["type"] for event in events], ["token", "token", "done"])
-        self.assertEqual("".join(event.get("content", "") for event in events), "Safe response.")
+        self.assertEqual("".join(event.get("content", "") for event in events), "Safe response [Source 1].")
         self.assertTrue(events[-1]["appendSources"])
         self.assertEqual(len(events[-1]["sources"]), 1)
         self.assertEqual(events[-1]["sourceReferences"][0]["kind"], "guideline")
@@ -582,6 +583,71 @@ class ChatOrchestrationTest(unittest.TestCase):
             '"recommendedActions":["Record the issue","Contact the supervisor"],'
             '"requiresConfirmation":false}]}'
         )
+
+    def test_uncited_retrieved_guidance_is_not_listed_as_a_source(self):
+        self.service.stream_tokens = ["Safe ", "response."]
+        with self.client.stream("POST", "/ai/chat/stream", json=_chat_payload(
+            "According to the restorative care pathway guide, what does it provide?"
+        )) as response:
+            events = [json.loads(line) for line in response.iter_lines() if line]
+        self.assertEqual(events[-1]["sources"], [])
+        self.assertNotIn("guideline", [item["kind"] for item in events[-1]["sourceReferences"]])
+
+    def test_patient_advice_without_linked_patient_is_not_generated(self):
+        response = self.client.post("/ai/chat", json=_chat_payload(
+            "How should I plan communication with this patient?", patient=False,
+        ))
+        self.assertIn("No patient record is linked", response.json()["reply"])
+        self.assertIsNone(self.service.last_messages)
+
+    def test_medication_support_summary_uses_support_outcome_not_task_status(self):
+        payload = _chat_payload("Summarize this patient's medication support record.")
+        payload["currentTaskContext"] = {"status": "pending", "type": "wellbeing"}
+        payload["medicationSupportContext"] = {"status": "Completed", "medicationNames": ["Medicine A"]}
+        reply = self.client.post("/ai/chat", json=payload).json()["reply"]
+        self.assertIn("outcome Completed", reply)
+        self.assertIn("Medicine A", reply)
+        self.assertNotIn("pending", reply)
+        self.assertIn("does not confirm", reply)
+
+    def test_medication_support_documentation_names_declined_outcome(self):
+        payload = _chat_payload("What should I document about this patient's medication support?")
+        payload["medicationSupportContext"] = {"status": "Declined", "medicationNames": ["Medicine A"]}
+        reply = self.client.post("/ai/chat", json=payload).json()["reply"]
+        self.assertIn("recorded as Declined", reply)
+        self.assertIn("declined support", reply)
+
+    def test_ingestion_question_states_recorded_outcome(self):
+        payload = _chat_payload("Can I say this patient took the recorded medicine?")
+        payload["medicationSupportContext"] = {"status": "Declined", "medicationNames": ["Medicine A"]}
+        reply = self.client.post("/ai/chat", json=payload).json()["reply"]
+        self.assertIn("recorded as Declined", reply)
+        self.assertIn("does not confirm", reply)
+
+    def test_pending_task_is_not_reported_as_late(self):
+        payload = _chat_payload("Is this patient's current task on time?")
+        payload["currentTaskContext"] = {"status": "pending"}
+        reply = self.client.post("/ai/chat", json=payload).json()["reply"]
+        self.assertIn("does not show whether it is on time", reply)
+        self.assertNotIn("not on time", reply)
+
+    def test_recorded_risk_question_lists_care_risk_flags(self):
+        payload = _chat_payload("What mobility risks are recorded for this patient?")
+        payload["patientContext"]["mobilitySupport"] = "Independent walking"
+        payload["patientContext"]["careRiskFlags"] = ["falls risk"]
+        reply = self.client.post("/ai/chat", json=payload).json()["reply"]
+        self.assertIn("falls risk", reply)
+        self.assertNotIn("No care risk flag", reply)
+
+    def test_condition_specific_guidance_requires_that_condition(self):
+        chunk = main.RetrievedChunk(text="Calm the patient.", score=0.9, source_title="Delirium Clinical Care Standard",
+                                   source_filename="delirium.pdf", page_start=1, page_end=1)
+        unrelated = main.AiChatRequest(**_chat_payload("How should I plan communication with this patient?"))
+        self.assertEqual(main._filter_rag_chunks([chunk], unrelated, "How should I plan communication with this patient?"), [])
+        payload = _chat_payload("How should I explain this task?")
+        payload["patientContext"]["cognitiveStatus"] = "Requires orientation prompts"
+        related = main.AiChatRequest(**payload)
+        self.assertEqual(main._filter_rag_chunks([chunk], related, "How should I explain this task?"), [chunk])
 
 
 if __name__ == "__main__":
