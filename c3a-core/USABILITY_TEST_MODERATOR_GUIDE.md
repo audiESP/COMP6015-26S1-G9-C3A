@@ -40,8 +40,10 @@ in the report rather than treating it as a missed test.
 
 ## Session flow
 
-1. Consent first (signature on the Consent Form, or verbal consent per the
-   student-pilot wording — see `PILOT_QUESTIONNAIRE_NOTES.md`).
+1. Verbal consent first. Participants are friends of the team role-playing
+   care workers (informal peer walkthrough, no HREC study): explain the
+   purpose, the procedure and how the notes will be used, confirm they can
+   stop at any time, and record only a participant code (P1, P2, ...).
 2. Think-aloud framing: "Please talk through what you're thinking as you go
    — I'm testing the app, not you."
 3. Run the seven tasks below in order, reading each **prompt** verbatim.
@@ -49,7 +51,8 @@ in the report rather than treating it as a missed test.
    time (not counting time spent waiting on the AI) — and if you do help,
    mark that task as assisted, not an unassisted pass.
 4. Hand over the Questionnaire for them to complete alone.
-5. Thank them, give the voucher, offer the optional follow-up.
+5. Thank them and ask the optional follow-up questions. No payment or
+   voucher is given.
 
 ## Timing rule: operating time vs. AI wait time
 
