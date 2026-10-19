@@ -6,7 +6,10 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "web": "expo start --web --port 8090",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed --debug"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.15",

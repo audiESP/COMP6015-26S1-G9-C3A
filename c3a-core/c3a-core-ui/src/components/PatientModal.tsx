@@ -1,6 +1,6 @@
 import tw from '../ui/tw';
 // src/components/PatientModal.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,16 @@ export const PatientModal: React.FC<Props> = ({
 }) => {
   const { t } = useTranslation();
   const [form, setForm] = useState<Partial<PatientInfo>>(initial ?? {});
+
+  // `initial` can arrive after this component has already mounted with a
+  // stale/default value (e.g. the visit's patient data resolves after the
+  // modal's first render) — resync whenever it changes or the modal opens,
+  // so `handleSave` never submits a previous patient's identity fields.
+  useEffect(() => {
+    if (visible) {
+      setForm(initial ?? {});
+    }
+  }, [visible, initial]);
 
   const handleSave = () => {
     if (!form.name?.trim()) return;
@@ -103,6 +113,7 @@ export const PatientModal: React.FC<Props> = ({
               style={styles.cancelBtn}
               onPress={onClose}
               activeOpacity={0.7}
+              accessibilityRole="button"
             >
               <Text style={styles.cancelText}>{t('patient.cancel')}</Text>
             </TouchableOpacity>
@@ -111,6 +122,7 @@ export const PatientModal: React.FC<Props> = ({
               onPress={handleSave}
               activeOpacity={0.8}
               disabled={!form.name?.trim()}
+              accessibilityRole="button"
             >
               <Text style={styles.saveText}>{t('patient.save')}</Text>
             </TouchableOpacity>
