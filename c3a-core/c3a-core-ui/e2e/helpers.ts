@@ -199,9 +199,12 @@ export async function startVisitIfNeeded(page: Page) {
   if (!response.ok()) {
     throw new Error(`startVisitIfNeeded: POST /visits/{id}/start returned ${response.status()}`);
   }
-  // Give the UI a moment to re-render from the now-started visit.
+  // Give the UI a moment to re-render from the now-started visit. The
+  // status label is uppercased by CSS ("IN PROGRESS"), so match without
+  // case; options go in the third argument (the second is the page arg).
   await page.waitForFunction(
-    () => document.body.innerText.includes('in progress'),
+    () => /in progress/i.test(document.body.innerText),
+    undefined,
     { timeout: 15000 },
   ).catch(() => {});
 }
