@@ -1,4 +1,6 @@
 .env
+.env.pre-sync.bak
+.env.*.tmp
 c3a-core-api/.env
 c3a-core-ai/.env
 c3a-core-ui/.env

@@ -60,6 +60,8 @@ generation, then returns the answer with structured source references.
 ├── start-windows.bat     Windows one-click launcher
 ├── start-linux.sh        Linux launcher
 ├── start-macos.command   macOS launcher
+├── tools/
+│   └── sync_env.py        Environment validation and synchronization
 ├── docs/
 │   ├── DEVELOPMENT.md
 │   ├── DATA_MANAGEMENT.md
@@ -102,34 +104,60 @@ python -m pip install -r .\c3a-core-ai\requirements.txt
 Set-Location .\c3a-core-ui
 npm ci
 Set-Location ..
-
-Copy-Item .\c3a-core-api\.env.example .\c3a-core-api\.env
-Copy-Item .\c3a-core-ai\.env.example .\c3a-core-ai\.env
-Copy-Item .\c3a-core-ui\.env.example .\c3a-core-ui\.env
 ```
 
-> **Required — provide your own API keys and credentials:** before starting the
-> application, open the copied `.env` files and replace the example values with
-> credentials from your own accounts. The launchers do not create, supply, or
-> validate API keys for you.
+> **Required — provide your own API keys and credentials:** the launchers never
+> generate or supply credentials. Configure `DATABASE_URL` in both backend
+> environments and configure `QDRANT_URL`, `QDRANT_API_KEY`, and
+> `TAVILY_API_KEY` for the AI environment.
 
-At minimum, set your own `DATABASE_URL` in both backend `.env` files. In
-`c3a-core/c3a-core-ai/.env`, set your own `QDRANT_URL` and `QDRANT_API_KEY` when
-RAG is enabled, and set your own `TAVILY_API_KEY` when web search is enabled.
-Alternatively, disable integrations for which you do not have credentials, for
-example with `CHAT_RAG_ENABLED=false`; leaving `TAVILY_API_KEY` empty disables
-Tavily web search. Never use another developer's credentials and never commit
-local `.env` files.
+Every launcher applies the following environment-file rules before installing
+packages or starting a service:
+
+1. It discovers every `.env.example`/`.env` pair in the repository and validates
+   the available files' syntax and key schema.
+2. If every `.env` contains every key from its example and all required private
+   values are configured, startup continues immediately. Differences from
+   `.env.example` do not overwrite an already complete `.env`.
+3. If any `.env` is missing or incomplete, all example credentials are checked.
+   Keys ending in `API_KEY`, `TOKEN`, `SECRET`, or `PASSWORD`, plus
+   `DATABASE_URL` and `QDRANT_URL`, must not be empty, too short, or placeholder
+   values. One invalid example value causes a warning and aborts startup before
+   any file is copied.
+4. If all required example values are configured, each missing or incomplete
+   `.env` is atomically replaced from its matching `.env.example`. An existing
+   file is first backed up as `.env.pre-sync.bak`.
+5. Malformed entries, duplicate keys, unmatched files, read failures, backup
+   failures, and copy failures stop startup and display the exact reason.
+
+> **Security warning:** `.env.example` files are tracked by Git. Prefer keeping
+> real secrets only in the ignored `.env` files. If you temporarily configure an
+> example so it can repair an incomplete `.env`, never stage or commit that
+> example; restore its placeholder values afterward. Never use another
+> developer's credentials. `.env`, `.env.pre-sync.bak`, and temporary sync files
+> are ignored by Git.
 
 The checked-in demo visits are dated `2026-09-04`. Keep
 `EXPO_PUBLIC_SHIFT_DATE=2026-09-04` while using that seed data.
 
 ### 3. Start all services
 
-Run the launcher for your operating system from the repository root. Each
-launcher checks Python, npm, and Ollama; starts the Ollama server when needed;
-pulls `llama3.1:8b-instruct-q4_K_M` when it is missing; and then starts the AI,
-API, and Expo UI services.
+Run the launcher for your operating system from the repository root. Its
+preflight validates Python, pip, Node.js, npm, and Ollama and applies the
+environment rules above. It then installs the API and AI Python requirements
+with:
+
+```text
+python -m pip install -r c3a-core/c3a-core-api/requirements.txt
+python -m pip install -r c3a-core/c3a-core-ai/requirements.txt
+```
+
+For the UI, the launcher runs `npm ls --depth=0` to validate the existing
+environment. If `node_modules` is missing or invalid, it runs `npm ci` using the
+checked-in lockfile; if no lockfile exists, it falls back to `npm install`.
+Only after these dependency steps succeed does it start or reuse the Ollama
+server, pull `llama3.1:8b-instruct-q4_K_M` when missing, and start the AI, API,
+and Expo UI services. A failed dependency installation stops the launch.
 
 Windows:
 
@@ -154,7 +182,17 @@ chmod +x ./start-macos.command
 The first run can take time because the model download is about 4.9 GB. An
 already-running Ollama server is reused. On Linux and macOS, press `Ctrl+C` to
 stop the processes started by the launcher. Add `--check` to any launcher to
-run its checks without starting services or downloading the model.
+check environment completeness, report any synchronization that a normal run
+would perform, and check commands, files, pip, and UI dependencies without
+copying or installing anything, starting services, or downloading the model.
+
+If environment validation or synchronization fails, a required command,
+entrypoint, requirements file, or package environment is missing, or an
+installation, Ollama startup, or model download fails, the launcher stops and
+displays the specific reason. Windows uses a system warning dialog and macOS
+uses a native alert. Linux uses `zenity` or `kdialog` when available, with
+`notify-send` as a desktop-notification fallback. Headless Linux environments
+always receive the same error in the terminal because no GUI is available.
 
 ### 4. Manual startup (optional)
 
@@ -262,7 +300,9 @@ are recorded in [docs/TESTING.md](docs/TESTING.md).
 ## Security notice
 
 Real service credentials were previously present in tracked development files.
-The current examples contain placeholders, but removing a value from the
-working tree does not remove it from Git history. Project owners must rotate
-all previously exposed PostgreSQL, Qdrant, and web-search credentials before
-further use and use a history-rewriting process if the repository is shared.
+The committed versions of `.env.example` files must contain placeholders; any
+local real values used for repair must never be staged or committed. Removing a
+value from the working tree does not remove it from Git history. Project owners
+must rotate all previously exposed PostgreSQL, Qdrant, and web-search
+credentials before further use and use a history-rewriting process if the
+repository is shared.

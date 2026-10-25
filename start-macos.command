@@ -10,10 +10,20 @@ CORE_DIR="$SCRIPT_DIR/c3a-core"
 UI_DIR="$CORE_DIR/c3a-core-ui"
 API_DIR="$CORE_DIR/c3a-core-api"
 AI_DIR="$CORE_DIR/c3a-core-ai"
+ENV_SYNC_SCRIPT="$SCRIPT_DIR/tools/sync_env.py"
 OLLAMA_MODEL="llama3.1:8b-instruct-q4_K_M"
+
+show_warning() {
+  if command -v osascript >/dev/null 2>&1; then
+    C3A_WARNING_MESSAGE="$1" osascript \
+      -e 'display alert "C3A Startup Warning" message (system attribute "C3A_WARNING_MESSAGE") as warning buttons {"OK"} default button "OK"' \
+      >/dev/null 2>&1 || true
+  fi
+}
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
+  show_warning "$1"
   exit 1
 }
 
@@ -31,10 +41,33 @@ find_python() {
   fi
 }
 
+run_env_sync() {
+  local output
+  if [[ "${1:-}" == "--check" ]]; then
+    if output="$("$API_PYTHON" "$ENV_SYNC_SCRIPT" --root "$SCRIPT_DIR" --check 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+  else
+    if output="$("$API_PYTHON" "$ENV_SYNC_SCRIPT" --root "$SCRIPT_DIR" 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+  fi
+  [[ -n "$output" ]] || output="Environment validation failed without an error message."
+  fail "${output#ERROR: }"
+}
+
 [[ -f "$UI_DIR/package.json" ]] || fail "UI entrypoint not found: $UI_DIR/package.json"
 [[ -f "$API_DIR/main.py" ]] || fail "API entrypoint not found: $API_DIR/main.py"
 [[ -f "$AI_DIR/main.py" ]] || fail "AI entrypoint not found: $AI_DIR/main.py"
+[[ -f "$API_DIR/requirements.txt" ]] || fail "API requirements not found: $API_DIR/requirements.txt"
+[[ -f "$AI_DIR/requirements.txt" ]] || fail "AI requirements not found: $AI_DIR/requirements.txt"
+[[ -f "$ENV_SYNC_SCRIPT" ]] || fail "Environment checker not found: $ENV_SYNC_SCRIPT"
+command -v node >/dev/null 2>&1 || fail "Node.js was not found on PATH. Install Node.js first."
 command -v npm >/dev/null 2>&1 || fail "npm was not found on PATH. Install Node.js first."
+node --version >/dev/null 2>&1 || fail "Node.js was found but could not run."
+npm --version >/dev/null 2>&1 || fail "npm was found but could not run."
 
 OLLAMA_BIN="$(command -v ollama || true)"
 if [[ -z "$OLLAMA_BIN" && -x "/Applications/Ollama.app/Contents/Resources/ollama" ]]; then
@@ -44,12 +77,22 @@ fi
 
 API_PYTHON="$(find_python "$API_DIR")" || fail "Python 3 was not found. Create .venv here or install Python 3."
 AI_PYTHON="$(find_python "$AI_DIR")" || fail "Python 3 was not found. Create .venv here or install Python 3."
+"$API_PYTHON" -m pip --version >/dev/null 2>&1 || fail "pip is unavailable for the API Python environment."
+"$AI_PYTHON" -m pip --version >/dev/null 2>&1 || fail "pip is unavailable for the AI Python environment."
 
 if [[ "${1:-}" == "--check" ]]; then
+  run_env_sync --check
   printf 'C3A startup preflight passed.\n'
   printf 'API Python: %s\n' "$API_PYTHON"
   printf 'AI Python:  %s\n' "$AI_PYTHON"
-  printf 'npm:        %s\n' "$(command -v npm)"
+  printf 'Node.js:    %s (%s)\n' "$(command -v node)" "$(node --version)"
+  printf 'npm:        %s (%s)\n' "$(command -v npm)" "$(npm --version)"
+  printf 'Python requirements: found; normal startup will install them\n'
+  if [[ -d "$UI_DIR/node_modules" ]] && (cd "$UI_DIR" && npm ls --depth=0 >/dev/null 2>&1); then
+    printf 'UI dependencies: installed and valid\n'
+  else
+    printf 'UI dependencies: missing or invalid; normal startup will run npm ci\n'
+  fi
   printf 'Ollama:     %s\n' "$OLLAMA_BIN"
   printf 'AI model:   %s\n' "$OLLAMA_MODEL"
   if "$OLLAMA_BIN" list >/dev/null 2>&1; then
@@ -63,6 +106,25 @@ if [[ "${1:-}" == "--check" ]]; then
     printf 'Ollama server: not running; normal startup will start it\n'
   fi
   exit 0
+fi
+
+run_env_sync
+
+printf 'Installing API Python requirements...\n'
+"$API_PYTHON" -m pip install -r "$API_DIR/requirements.txt" || fail "Failed to install API Python requirements."
+
+printf 'Installing AI Python requirements...\n'
+"$AI_PYTHON" -m pip install -r "$AI_DIR/requirements.txt" || fail "Failed to install AI Python requirements."
+
+if [[ -d "$UI_DIR/node_modules" ]] && (cd "$UI_DIR" && npm ls --depth=0 >/dev/null 2>&1); then
+  printf 'UI dependencies are installed and valid.\n'
+else
+  printf 'Installing UI dependencies...\n'
+  if [[ -f "$UI_DIR/package-lock.json" ]]; then
+    (cd "$UI_DIR" && npm ci) || fail "Failed to install UI dependencies with npm ci."
+  else
+    (cd "$UI_DIR" && npm install) || fail "Failed to install UI dependencies with npm install."
+  fi
 fi
 
 PIDS=()
