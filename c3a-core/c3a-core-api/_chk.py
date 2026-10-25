@@ -1,6 +1,13 @@
-import psycopg
+import os
 
-url = "postgresql://neondb_owner:npg_vNQ4dpUYzT9S@ep-purple-surf-apo7wfbi-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+import psycopg
+from dotenv import load_dotenv
+
+
+load_dotenv()
+url = os.getenv("DATABASE_URL", "").strip()
+if not url:
+    raise RuntimeError("DATABASE_URL is not configured; copy .env.example to .env first")
 conn = psycopg.connect(url)
 cur = conn.cursor()
 
