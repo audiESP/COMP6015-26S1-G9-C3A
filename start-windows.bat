@@ -158,16 +158,17 @@ exit /b 1
 
 :run_env_sync
 set "ENV_SYNC_LOG=%TEMP%\c3a-env-sync-%RANDOM%-%RANDOM%.log"
-"%API_PYTHON%" %API_PYTHON_ARGS% "%ENV_SYNC_SCRIPT%" --root "%ROOT%" %* >"%ENV_SYNC_LOG%" 2>&1
+"%API_PYTHON%" %API_PYTHON_ARGS% "%ENV_SYNC_SCRIPT%" --root "%ROOT%." %* >"%ENV_SYNC_LOG%" 2>&1
 set "ENV_SYNC_EXIT=%ERRORLEVEL%"
-type "%ENV_SYNC_LOG%"
 if "%ENV_SYNC_EXIT%"=="0" goto :env_sync_succeeded
 set "C3A_STARTUP_ERROR=Environment validation or synchronization failed. See the terminal for details."
 for /f "usebackq delims=" %%L in ("%ENV_SYNC_LOG%") do set "C3A_STARTUP_ERROR=%%L"
+set "C3A_STARTUP_ERROR=%C3A_STARTUP_ERROR:ERROR: =%"
 del /q "%ENV_SYNC_LOG%" >nul 2>&1
 exit /b 1
 
 :env_sync_succeeded
+type "%ENV_SYNC_LOG%"
 del /q "%ENV_SYNC_LOG%" >nul 2>&1
 exit /b 0
 
