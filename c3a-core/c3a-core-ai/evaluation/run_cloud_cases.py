@@ -290,6 +290,7 @@ def main() -> None:
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--limit", type=int, default=0, help="Positive count for fixture/cleanup preflight; zero runs all 180")
     parser.add_argument("--multiturn-only", action="store_true", help="Run only 12 three-turn sequences (36 requests) using 12 new cloud patients")
+    parser.add_argument("--case-ids-file", type=Path, help="JSON list of case IDs to rerun; earlier turns of selected multi-turn cases are added")
     parser.add_argument("--cleanup-manifest", type=Path)
     args = parser.parse_args()
     if args.cleanup_manifest:

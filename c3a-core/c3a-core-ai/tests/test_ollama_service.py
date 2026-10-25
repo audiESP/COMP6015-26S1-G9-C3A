@@ -55,7 +55,8 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(requests[-1].content)
         self.assertEqual(payload["model"], service.model_name)
         self.assertTrue(payload["stream"])
-        self.assertEqual(payload["options"]["num_predict"], service.num_predict)
+        # Default 250-word limit needs more than the base budget to avoid truncation.
+        self.assertEqual(payload["options"]["num_predict"], 250 * 2 + 40)
 
     async def test_generate_reply_uses_report_token_budget_when_word_limit_disabled(self):
         requests = []
@@ -333,6 +334,13 @@ class OllamaMessageTest(unittest.TestCase):
         self.assertIn("## Resolved or Dismissed Risk Alerts (historical only)", system_content)
         self.assertNotIn("## Current Risk Alerts", system_content)
         self.assertNotIn("Falls risk. None", system_content)
+
+    def test_dietary_notes_only_shown_for_food_questions(self):
+        patient = SimpleNamespace(name="Jane", mobilitySupport="Walker", dietaryNotes="Prefers a warm lunch.")
+        mobility = _build_ollama_messages([("user", "How should I assist with walking?")], patient=patient)
+        food = _build_ollama_messages([("user", "What should I prepare for lunch?")], patient=patient)
+        self.assertNotIn("warm lunch", mobility[0]["content"])
+        self.assertIn("warm lunch", food[0]["content"])
 
 
 if __name__ == "__main__":

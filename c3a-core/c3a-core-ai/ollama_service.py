@@ -33,9 +33,10 @@ does not prove that a medicine was administered or swallowed; state ingestion
 only when an item-level taken status explicitly records it. A resolved or
 dismissed risk alert is historical and must not be called active.
 For care-worker questions, give practical aged-care actions and escalation or
-red-flag advice appropriate to the worker's role. Tailor guidance to the current
-visit status, task list, recent events, active risks, patient mobility, CALD
-needs, and the health worker's role.
+red-flag advice appropriate to the worker's role. Tailor guidance using only the
+record fields that change what the worker should do for this question; do not
+list unrelated fields such as dietary preferences in mobility or communication
+advice.
 When the user asks for help with the current task, answer under these short
 headings: Current situation, Steps, Watch for, Escalate when, and Sources. Give
 only actions within the supplied worker's role. In Sources, cite directly
@@ -328,7 +329,8 @@ class OllamaService:
             max_context_chars=self.max_context_chars,
             response_word_limit=response_word_limit,
         )
-        num_predict = self.report_num_predict if response_word_limit is None else self.num_predict
+        num_predict = (self.report_num_predict if response_word_limit is None
+                       else max(self.num_predict, _token_budget(response_word_limit)))
         payload = {
             "model": self.model_name,
             "messages": ollama_messages,
@@ -379,6 +381,11 @@ class OllamaService:
         )
 
 
+def _token_budget(word_limit: int) -> int:
+    """Allow about two tokens per word plus headings, so answers are not cut off mid-sentence."""
+    return word_limit * 2 + 40
+
+
 def _build_ollama_messages(
     messages,
     patient=None,
@@ -403,7 +410,9 @@ def _build_ollama_messages(
     context_parts.append(
         "Keep the answer concise. Do not repeat the question. Use short paragraphs or bullet points."
     )
-    patient_context = _build_patient_context(patient)
+    latest_user = next((content for role, content in reversed(messages)
+                        if role == "user" and isinstance(content, str)), "")
+    patient_context = _build_patient_context(patient, latest_user)
     if patient_context:
         context_parts.append(patient_context)
     workflow_context = _build_workflow_context(
@@ -473,9 +482,19 @@ def _extract_json_object(content: str) -> str:
     raise ValueError("No JSON object found in Ollama translation response")
 
 
-def _build_patient_context(patient) -> str:
+# Dietary notes are only shown when the question concerns food, drink or a summary;
+# otherwise the model tends to fold them into unrelated mobility or communication advice.
+DIETARY_QUERY_TERMS = (
+    "diet", "food", "meal", "lunch", "breakfast", "dinner", "eat", "drink", "fluid",
+    "hydrat", "nutrition", "swallow", "summar", "overview",
+)
+
+
+def _build_patient_context(patient, query: str = "") -> str:
     if not patient:
         return ""
+    lowered_query = query.casefold()
+    show_dietary = not query or any(term in lowered_query for term in DIETARY_QUERY_TERMS)
     parts = ["## Linked Patient"]
     fields = [
         ("Name", "name"),
@@ -493,6 +512,8 @@ def _build_patient_context(patient) -> str:
         ("Communication notes", "communicationNotes"),
     ]
     for label, attribute in fields:
+        if attribute == "dietaryNotes" and not show_dietary:
+            continue
         value = getattr(patient, attribute, None)
         if value is not None and value != "":
             parts.append(f"- {label}: {value}")

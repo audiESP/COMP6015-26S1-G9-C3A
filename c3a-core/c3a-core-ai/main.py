@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from chat_router import RouteDecision, decide_route, with_effective_mode
+from chat_router import PATIENT_ANCHOR_PHRASES, RouteDecision, decide_route, with_effective_mode
 from db_context import DbContextResult, DbContextRetriever
 from logging_utils import add_exception_handlers, add_http_logging_middleware, preview_object
 from ollama_service import OllamaService, OllamaServiceError, UnsupportedAttachmentError
@@ -658,7 +658,7 @@ async def chat(req: AiChatRequest):
     combined_context = prepared.combined_context
 
     generation_started_at = time.perf_counter()
-    direct_reply = _current_record_reply(req) or _factual_record_reply(req)
+    direct_reply = _direct_reply(req)
     if direct_reply is not None:
         reply = direct_reply
     else:
@@ -706,8 +706,8 @@ async def chat(req: AiChatRequest):
         rag_payload["answer_method"] = "structured_current_record"
     response = AiChatResponse(
         reply=reply,
-        sources=[] if direct_reply is not None else _source_labels(accepted_rag_chunks),
-        sourceReferences=_current_record_sources(req) if direct_reply is not None else _source_references(req, prepared),
+        sources=[] if direct_reply is not None else _source_labels(_cited_chunks(accepted_rag_chunks, reply)),
+        sourceReferences=_current_record_sources(req) if direct_reply is not None else _source_references(req, prepared, reply),
         rag=rag_payload,
         model=service.status(),
     )
@@ -766,27 +766,28 @@ async def analyse_risk(req: RiskAnalysisRequest):
 async def chat_stream(req: AiChatRequest):
     started_at = time.perf_counter()
     prepared = await _prepare_chat(req)
-    direct_reply = _current_record_reply(req) or _factual_record_reply(req)
+    direct_reply = _direct_reply(req)
 
     async def event_stream():
         generation_started_at = time.perf_counter()
-        reply_chars = 0
+        reply_parts: list[str] = []
         try:
             if direct_reply is not None:
-                reply_chars = len(direct_reply)
+                reply_parts.append(direct_reply)
                 yield _ndjson({"type": "token", "content": direct_reply})
             else:
                 async for chunk in service.stream_reply(**_generation_kwargs(req, prepared)):
-                    reply_chars += len(chunk)
+                    reply_parts.append(chunk)
                     yield _ndjson({"type": "token", "content": chunk})
-            sources = [] if direct_reply is not None else _source_labels(prepared.accepted_rag_chunks)
+            reply = "".join(reply_parts)
+            sources = [] if direct_reply is not None else _source_labels(_cited_chunks(prepared.accepted_rag_chunks, reply))
             yield _ndjson(
                 {
                     "type": "done",
                     "sources": sources,
                     "sourceReferences": [
                         item.model_dump(exclude_none=True)
-                        for item in (_current_record_sources(req) if direct_reply is not None else _source_references(req, prepared))
+                        for item in (_current_record_sources(req) if direct_reply is not None else _source_references(req, prepared, reply))
                     ],
                     "appendSources": bool(sources),
                     "route": _route_payload(prepared),
@@ -801,7 +802,7 @@ async def chat_stream(req: AiChatRequest):
                 prepared.db_context_elapsed_ms,
                 (time.perf_counter() - generation_started_at) * 1000,
                 (time.perf_counter() - started_at) * 1000,
-                reply_chars,
+                len(reply),
             )
         except (UnsupportedAttachmentError, OllamaServiceError) as exc:
             logger.warning("AI streaming generation failed: %s", exc, exc_info=True)
@@ -883,7 +884,7 @@ async def _prepare_chat(req: AiChatRequest) -> PreparedChat:
             ),
         )
     )
-    accepted_rag_chunks = _filter_rag_chunks(rag_chunks)
+    accepted_rag_chunks = _filter_rag_chunks(rag_chunks, req, latest_user_query)
     rag_context = _build_chat_rag_context(accepted_rag_chunks)
     db_has_quality = _db_context_has_quality(db_context_result.metadata)
     rag_has_quality = bool(accepted_rag_chunks)
@@ -930,6 +931,35 @@ def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, 
         "rag_context": prepared.combined_context,
         "response_word_limit": req.responseWordLimit if req.responseWordLimit and req.responseWordLimit > 0 else None,
     }
+
+
+def _direct_reply(req: AiChatRequest) -> str | None:
+    """Return a structured answer when the question can be answered from fields alone."""
+    return (
+        _missing_patient_reply(req)
+        or _current_record_reply(req)
+        or _factual_record_reply(req)
+        or _medication_support_record_reply(req)
+        or _task_timing_reply(req)
+        or _recorded_risk_reply(req)
+    )
+
+
+def _missing_patient_reply(req: AiChatRequest) -> str | None:
+    """Refuse patient-specific answers when no patient is linked.
+
+    Without this, retrieved guidance can be presented as if it described the
+    unlinked patient (for example, asserting delirium from a delirium standard).
+    """
+    if req.patientContext is not None:
+        return None
+    latest = _latest_user_query(req.messages).casefold()
+    if not any(phrase in latest for phrase in PATIENT_ANCHOR_PHRASES):
+        return None
+    return (
+        "No patient record is linked to this chat, so the patient-specific answer cannot be determined. "
+        "Link the patient or open their visit, then ask again."
+    )
 
 
 def _is_current_record_refresh(text: str) -> bool:
@@ -1102,8 +1132,99 @@ def _medication_ingestion_reply(support: MedicationSupportContext | None) -> str
     if confirmed:
         names = [str(item.get("name") or item.get("medicationName") or "medicine") for item in confirmed]
         return "Item-level taken status confirms: " + ", ".join(names) + "."
-    return ("The supplied medication-support record does not confirm whether the medicine was taken. "
+    outcome = f"The medication-support outcome is recorded as {support.status}. " if support and support.status else ""
+    return (outcome + "The supplied medication-support record does not confirm whether the medicine was taken. "
             "A support outcome or medicine list alone is not proof of ingestion.")
+
+
+MEDICATION_SUPPORT_NEXT_STEP = {
+    "completed": "Record that support was completed; record the medicine as taken only if intake was confirmed item by item.",
+    "declined": "Record that the patient declined support and report it to the care coordinator or nurse under your organisation's process.",
+    "delayed": "Record the delay and when support will be offered, and report it if the medicine is time-critical.",
+    "unable to confirm": "Record that intake could not be confirmed and report it to the care coordinator or nurse.",
+    "unavailable": "Record that the medicine was unavailable and report it so supply can be arranged.",
+}
+
+
+def _medication_support_record_reply(req: AiChatRequest) -> str | None:
+    """Summarise or document the medication-support record from its fields.
+
+    The model tended to report the separate wellbeing task status as the
+    medication-support outcome, so these questions are answered directly.
+    """
+    user_turns = [message.content for message in req.messages if message.role == "user"]
+    if len(user_turns) != 1:
+        return None
+    question = user_turns[0].casefold()
+    if not any(term in question for term in ("medication support", "medicine support")):
+        return None
+    summarise = any(term in question for term in ("summar", "overview"))
+    document = "document" in question or "record about" in question
+    if not (summarise or document):
+        return None
+    support = req.medicationSupportContext
+    if not support or not support.status:
+        return "No medication-support record is supplied for this visit, so its outcome cannot be determined."
+    names = ", ".join(support.medicationNames) or "no medicine listed"
+    caution = "This support status does not confirm that any medicine was taken."
+    if summarise:
+        reply = f"Medication-support record: outcome {support.status}; medicines listed: {names}."
+        if support.notes:
+            reply += f" Notes: {support.notes}"
+        return f"{reply} {caution}"
+    next_step = MEDICATION_SUPPORT_NEXT_STEP.get(support.status.casefold(), "Record the outcome exactly as observed.")
+    return (f"Document that medication support for {names} was recorded as {support.status}. "
+            f"{next_step} {caution}")
+
+
+def _task_timing_reply(req: AiChatRequest) -> str | None:
+    """Answer on-time questions without inferring a delay from a pending status."""
+    user_turns = [message.content for message in req.messages if message.role == "user"]
+    if len(user_turns) != 1:
+        return None
+    question = user_turns[0].casefold()
+    if "task" not in question or not any(term in question for term in ("on time", "overdue", "running late", "behind schedule")):
+        return None
+    task = req.currentTaskContext
+    if not task or not task.status:
+        return "No current task status is supplied, so whether the task is on time cannot be determined."
+    status = task.status.casefold()
+    if status == "delayed":
+        return "The current task is recorded as delayed, so it is not on time."
+    if status == "completed":
+        return "The current task is recorded as completed."
+    if task.dueAt:
+        return (f"The current task is {task.status} and due at {task.dueAt}. "
+                "Compare the due time with the current time; no delay is recorded.")
+    return (f"The current task is {task.status}. No due time or delay is recorded, "
+            "so the record does not show whether it is on time.")
+
+
+def _recorded_risk_reply(req: AiChatRequest) -> str | None:
+    """List recorded risk flags and active alerts instead of inferring risk from mobility support."""
+    user_turns = [message.content for message in req.messages if message.role == "user"]
+    if len(user_turns) != 1:
+        return None
+    question = user_turns[0].casefold()
+    if not ("risk" in question and "recorded" in question) or any(
+        term in question for term in ("how should", "what should", "advise", "recommend")
+    ):
+        return None
+    patient = req.patientContext
+    if patient is None:
+        return None
+    flags = list(patient.careRiskFlags or [])
+    active = [risk.title or risk.riskType or "Unlabelled alert" for risk in (req.riskContext or [])
+              if (risk.status or "active").casefold() not in {"resolved", "dismissed"}]
+    if not flags and not active:
+        return ("No care risk flag or active risk alert is recorded in the supplied context. "
+                "This does not rule out risk; report any concern you observe.")
+    parts = []
+    if flags:
+        parts.append("Recorded care risk flags: " + ", ".join(flags) + ".")
+    if active:
+        parts.append("Active risk alerts: " + ", ".join(active) + ".")
+    return " ".join(parts)
 
 
 def _current_record_sources(req: AiChatRequest) -> list[SourceReference]:
@@ -1288,10 +1409,48 @@ async def _retrieve_for_chat(query: str) -> list[RetrievedChunk]:
         return []
 
 
-def _filter_rag_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
-    if CHAT_RAG_MIN_SCORE <= 0:
-        return chunks
-    return [chunk for chunk in chunks if chunk.score >= CHAT_RAG_MIN_SCORE]
+# Guidance written for one condition is only accepted when that condition is in
+# the question or the linked record; otherwise it is presented as patient fact.
+CONDITION_SPECIFIC_SOURCES = {
+    "delirium": ("delirium", "confus", "cognit", "orientation", "agitat", "disorient"),
+}
+
+
+def _filter_rag_chunks(
+    chunks: list[RetrievedChunk],
+    req: AiChatRequest | None = None,
+    query: str = "",
+) -> list[RetrievedChunk]:
+    if CHAT_RAG_MIN_SCORE > 0:
+        chunks = [chunk for chunk in chunks if chunk.score >= CHAT_RAG_MIN_SCORE]
+    context_text = _condition_context_text(req, query)
+    return [chunk for chunk in chunks if _condition_source_applies(chunk, context_text)]
+
+
+def _condition_context_text(req: AiChatRequest | None, query: str) -> str:
+    parts = [query]
+    patient = req.patientContext if req else None
+    if patient:
+        parts += [patient.diagnosis or "", patient.cognitiveStatus or "", patient.notes or "",
+                  patient.pastMedicalHistory or "", " ".join(patient.careRiskFlags or [])]
+    for risk in (req.riskContext or []) if req else []:
+        if (risk.status or "active").casefold() not in {"resolved", "dismissed"}:
+            parts += [risk.title or "", risk.riskType or "", risk.message or ""]
+    return " ".join(parts).casefold()
+
+
+def _condition_source_applies(chunk: RetrievedChunk, context_text: str) -> bool:
+    title = f"{chunk.source_title or ''} {chunk.source_filename or ''}".casefold()
+    for condition, cues in CONDITION_SPECIFIC_SOURCES.items():
+        if condition in title and not any(cue in context_text for cue in cues):
+            return False
+    return True
+
+
+def _cited_chunks(chunks: list[RetrievedChunk], reply: str) -> list[RetrievedChunk]:
+    """Keep only retrieved chunks whose [Source N] label appears in the reply."""
+    cited = {int(number) for number in re.findall(r"\[Source (\d+)\]", reply or "")}
+    return [chunk for index, chunk in enumerate(chunks, start=1) if index in cited]
 
 
 def _empty_db_context_result() -> DbContextResult:
@@ -1436,7 +1595,9 @@ def _build_chat_rag_context(chunks: list[RetrievedChunk]) -> str:
         "Use retrieved evidence below only for claims it directly supports; the supplied patient and workflow fields remain the source for individual facts. "
         "Use the exact care pathway, warning signs, actions, or limits described in these sources when they are relevant. "
         "If the retrieved evidence is only partially relevant, say that clearly and separate evidence-based points from general clinical context. "
-        "For care-worker questions, give a direct answer first, then 3-5 practical actions or signs, and include escalation/red-flag advice. "
+        "Give a direct answer first. Add practical actions or escalation advice only when the question asks what to do, "
+        "and only actions that fit this patient's recorded needs. Do not apply guidance written for a condition "
+        "(for example delirium) unless that condition is recorded for the patient or asked about. "
         "Refer to evidence using labels such as [Source 1] when relevant.\n\n"
         + "\n\n".join(evidence_blocks)
     )
@@ -1466,7 +1627,9 @@ def _source_labels(chunks: list[RetrievedChunk]) -> list[str]:
     return labels
 
 
-def _source_references(req: AiChatRequest, prepared: PreparedChat) -> list[SourceReference]:
+def _source_references(req: AiChatRequest, prepared: PreparedChat, reply: str) -> list[SourceReference]:
+    # Label numbers follow the prompt order, so keep the original index of each cited chunk.
+    cited = {id(chunk) for chunk in _cited_chunks(prepared.accepted_rag_chunks, reply)}
     references = [
         SourceReference(
             id=f"guideline-{index}",
@@ -1480,6 +1643,7 @@ def _source_references(req: AiChatRequest, prepared: PreparedChat) -> list[Sourc
             section=chunk.section_heading or None,
         )
         for index, chunk in enumerate(prepared.accepted_rag_chunks, start=1)
+        if id(chunk) in cited
     ]
 
     db_metadata = prepared.db_context_result.metadata
@@ -1510,7 +1674,7 @@ def _source_references(req: AiChatRequest, prepared: PreparedChat) -> list[Sourc
             )
         )
 
-    if not prepared.accepted_rag_chunks and not db_metadata.get("used_for_chat"):
+    if not cited and not db_metadata.get("used_for_chat"):
         references.append(
             SourceReference(
                 id="general-knowledge",
