@@ -9,6 +9,29 @@ set "API_DIR=%CORE_DIR%\c3a-core-api"
 set "AI_DIR=%CORE_DIR%\c3a-core-ai"
 set "ENV_SYNC_SCRIPT=%ROOT%tools\sync_env.py"
 set "OLLAMA_MODEL=llama3.1:8b-instruct-q4_K_M"
+set "CHECK_ONLY="
+set "ENV_SOURCE_DIR="
+
+rem Usage: start-windows.bat [--check] [ENV_FOLDER]
+rem ENV_FOLDER holds .env files laid out like this repository, e.g.
+rem ENV_FOLDER\c3a-core\c3a-core-api\.env; they are copied in before startup.
+:parse_args
+if "%~1"=="" goto :args_parsed
+if /I "%~1"=="--check" (
+    set "CHECK_ONLY=1"
+    shift
+    goto :parse_args
+)
+set "C3A_ARG=%~1"
+if "%C3A_ARG:~0,1%"=="-" goto :unknown_option
+if defined ENV_SOURCE_DIR goto :too_many_env_folders
+set "ENV_SOURCE_DIR=%~f1"
+shift
+goto :parse_args
+:args_parsed
+set "ENV_SYNC_ARGS="
+if defined CHECK_ONLY set "ENV_SYNC_ARGS=--check"
+if defined ENV_SOURCE_DIR set ENV_SYNC_ARGS=%ENV_SYNC_ARGS% --import-from "%ENV_SOURCE_DIR%"
 
 if not exist "%UI_DIR%\package.json" goto :missing_ui
 if not exist "%API_DIR%\main.py" goto :missing_api
@@ -73,8 +96,8 @@ if errorlevel 1 goto :missing_api_pip
 "%AI_PYTHON%" %AI_PYTHON_ARGS% -m pip --version >nul 2>&1
 if errorlevel 1 goto :missing_ai_pip
 
-if /I "%~1"=="--check" (
-    call :run_env_sync --check
+if defined CHECK_ONLY (
+    call :run_env_sync
     if errorlevel 1 goto :failed
     echo C3A startup preflight passed.
     echo API Python: %API_PYTHON% %API_PYTHON_ARGS%
@@ -158,7 +181,7 @@ exit /b 1
 
 :run_env_sync
 set "ENV_SYNC_LOG=%TEMP%\c3a-env-sync-%RANDOM%-%RANDOM%.log"
-"%API_PYTHON%" %API_PYTHON_ARGS% "%ENV_SYNC_SCRIPT%" --root "%ROOT%." %* >"%ENV_SYNC_LOG%" 2>&1
+"%API_PYTHON%" %API_PYTHON_ARGS% "%ENV_SYNC_SCRIPT%" --root "%ROOT%." %ENV_SYNC_ARGS% >"%ENV_SYNC_LOG%" 2>&1
 set "ENV_SYNC_EXIT=%ERRORLEVEL%"
 if "%ENV_SYNC_EXIT%"=="0" goto :env_sync_succeeded
 set "C3A_STARTUP_ERROR=Environment validation or synchronization failed. See the terminal for details."
@@ -212,6 +235,14 @@ exit /b 0
 :ui_dependencies_invalid
 popd
 exit /b 1
+
+:unknown_option
+set "C3A_STARTUP_ERROR=Unknown option: %C3A_ARG%"
+goto :failed
+
+:too_many_env_folders
+set "C3A_STARTUP_ERROR=Only one environment folder may be given."
+goto :failed
 
 :missing_ui
 set "C3A_STARTUP_ERROR=UI entrypoint not found: %UI_DIR%\package.json"
