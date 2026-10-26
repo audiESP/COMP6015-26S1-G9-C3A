@@ -173,3 +173,56 @@ Before tagging a research/demo release:
 7. secret-scan the working tree and Git history;
 8. verify that distributed artefacts contain only synthetic/sanitised data.
 
+## 9. Future work and recommendations
+
+### Incomplete and under-tested workflows
+
+- Continue end-to-end review of Start Visit and Finish Visit so that care
+  outcomes, alerts, tasks, and the reviewed report are persisted in the intended
+  order before a visit is completed.
+- Test medication display, edits, support outcomes, and audit records across a
+  wider set of visit states and failure responses.
+- Test the generated visit report with more synthetic scenarios and verify that
+  unsupported or missing information is not presented as fact.
+- Review responsive layout, permissions, accessibility, and error presentation
+  on representative phones, tablets, emulators, and browser targets.
+
+### Technical improvements
+
+- Add frontend unit, component, accessibility, and end-to-end tests for visit
+  mutations, medication support, forms, report generation, offline behaviour,
+  permissions, and attachments.
+- Add a continuous-integration workflow with explicit lint, type, unit,
+  integration, and secret-scanning gates.
+- Improve form validation and error messages so users can identify the field,
+  failed rule, and recovery action.
+- Introduce a database migration ledger and a reviewed automated migration
+  runner.
+- Lock Python dependencies or publish verified service images, then add a
+  full-stack development Compose configuration where it improves reproducibility.
+- Replace the temporary upload endpoint with authenticated managed storage,
+  bounded retention, and tested deletion, or disable it.
+
+### AI improvements
+
+- Expand domain-expert review of factual accuracy, uncertainty, medication
+  wording, interpreter requirements, evidence relevance, and missing context.
+- Constrain visit-report prompts to the supplied visit record and make omitted
+  information explicit rather than inferred.
+- Evaluate structured report output, such as a validated JSON schema before UI
+  rendering and persistence.
+- Record model digests, latency, memory use, and hardware requirements with each
+  formal evaluation.
+- Keep model-based judging as a triage aid and retain independent review for
+  safety-critical cases.
+
+### Recommendations for the next team
+
+The next team should reproduce the current environment and test the existing
+workflow before changing the database, API contracts, system structure, or AI
+configuration. Start with the documented failures and missing coverage, then
+stabilise deployment and test automation before adding broad new features.
+Record every material architecture, migration, environment, model, and data
+change in the repository documentation so later teams can reproduce the same
+state.
+

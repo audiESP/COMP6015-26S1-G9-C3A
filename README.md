@@ -12,12 +12,15 @@ optional local speech-to-text service.
 
 ## Comprehensive documentation
 
+- [Comprehensive technical documentation](docs/C3A_Comprehensive_Technical_Documentation.docx) — consolidated Word report covering the documentation set, architecture, development environment, data management, testing, deployment infrastructure, future work, and handover guidance.
 - [Development environment](docs/DEVELOPMENT.md) — prerequisites, configuration,
-  database setup, RAG ingestion, speech container, startup, and troubleshooting.
+  database setup, RAG ingestion, speech container, startup, troubleshooting,
+  deployment boundaries, and reproducibility.
 - [Data management](docs/DATA_MANAGEMENT.md) — data inventory, ownership, flow,
   persistence, migrations, backup, deletion, privacy, and security boundaries.
 - [Testing and quality](docs/TESTING.md) — automated checks, the 180-case AI
-  evaluation, the latest verification snapshot, and known limitations.
+  evaluation, the latest verification snapshot, known limitations, and
+  recommendations for the next development team.
 
 ## System architecture
 

@@ -30,7 +30,8 @@ Recommended baseline:
 - Node.js/npm compatible with the checked-in Expo 57 application; install with
   `npm ci` to honour `package-lock.json`.
 - PostgreSQL `psql` client for applying raw SQL migrations.
-- Ollama and `llama3.1:8b`, unless another compatible text model is configured.
+- Ollama and `llama3.1:8b-instruct-q4_K_M`, unless another compatible text
+  model is deliberately configured and tested.
 - Docker Desktop/Engine with Compose for speech recognition.
 
 The repository does not contain a Python lockfile or a full-stack Docker image.
@@ -39,6 +40,12 @@ For reproducible results, record the Python version and the output of
 virtual environment.
 
 ## 3. Install dependencies
+
+The root launchers perform these installation steps on a normal run. They
+verify Python, pip, Node.js, npm, Ollama, the application entry points, both
+Python requirements files, and the existing UI package environment before any
+service starts. A missing dependency or failed installation stops the launch
+and reports the reason instead of opening a partially configured stack.
 
 ```powershell
 Set-Location c3a-core
@@ -58,6 +65,10 @@ Bash activation is `source .venv/bin/activate`; backend startup can then use
 
 ## 4. Configure environment files
 
+Every developer must provide and maintain their own API keys and connection
+credentials. The project does not generate or distribute PostgreSQL, Qdrant,
+or Tavily credentials, and another developer's credentials must not be reused.
+
 ```powershell
 Copy-Item .\c3a-core-api\.env.example .\c3a-core-api\.env
 Copy-Item .\c3a-core-ai\.env.example .\c3a-core-ai\.env
@@ -66,6 +77,36 @@ Copy-Item .\c3a-core-ui\.env.example .\c3a-core-ui\.env
 
 The `.env` files are ignored by Git. The examples must contain placeholders
 only.
+
+### Launcher validation and recovery
+
+Before dependency installation, `tools/sync_env.py` checks every
+`.env.example` and `.env` pair in the repository.
+
+1. A `.env` is complete when it contains every key from its example and every
+   required private value is configured.
+2. A complete `.env` is used directly and is not overwritten only because its
+   values differ from the example.
+3. If a `.env` is missing or incomplete, all example credentials are checked.
+   Keys ending in `API_KEY`, `TOKEN`, `SECRET`, or `PASSWORD`, together with
+   `DATABASE_URL` and `QDRANT_URL`, must not be empty, too short, or recognised
+   placeholders.
+4. One invalid required example value stops startup before any file is copied.
+5. If every required example value is valid, only the missing or incomplete
+   `.env` files are copied from their examples. An existing destination is
+   backed up as `.env.pre-sync.bak`, and replacement is atomic.
+6. Malformed assignments, duplicate keys, unmatched files, read failures,
+   backup failures, and copy failures stop startup with the exact reason.
+
+Use `--check` with any root launcher to validate the environment and report a
+proposed repair without copying files, installing packages, downloading the
+model, or starting services. Windows shows a system warning dialog, macOS uses
+a native alert, and Linux uses `zenity`, `kdialog`, or `notify-send` when
+available. All platforms also print the error in the terminal.
+
+The examples are tracked by Git and should normally retain placeholders. If an
+example is temporarily populated to repair an incomplete `.env`, restore its
+placeholders immediately and never stage or commit the populated file.
 
 ### UI settings
 
@@ -135,7 +176,7 @@ applied filenames in deployment/change records.
 ## 6. Prepare Ollama and Qdrant
 
 ```powershell
-ollama pull llama3.1:8b
+ollama pull llama3.1:8b-instruct-q4_K_M
 ollama serve
 ```
 
@@ -177,8 +218,11 @@ public bind without authentication, TLS, request limits, and a privacy review.
 
 ## 8. Run and verify
 
-Start Ollama first, then the AI service, API gateway, and UI as shown in the
-root README. Expected checks:
+Run the operating-system launcher from the repository root. It starts or
+reuses Ollama, downloads `llama3.1:8b-instruct-q4_K_M` when missing, and then
+starts the AI service, API gateway, and UI. On Windows the Ollama console is
+started minimised; on Linux and macOS it runs as a background child process,
+so a separate foreground Ollama window may not be visible. Expected checks:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8001/ai/health | ConvertTo-Json -Depth 6
@@ -200,4 +244,46 @@ the nested `ai`, `database`, `rag`, and model fields.
 | Patient-specific answer lacks records | Configure AI `DATABASE_URL` and confirm the requested synthetic patient exists. |
 | Speech returns unavailable | Start the speech container and validate the mounted model paths. |
 | Attachment request is rejected | The default local Llama model is text-only; attachment analysis is not implemented. |
+
+## 10. Deployment and infrastructure
+
+### Current development topology
+
+C3A currently runs as separate native development processes: the Expo client,
+API gateway, AI service, Ollama, PostgreSQL, and Qdrant. The optional speech
+service is the only component with a project-provided container definition.
+The root launchers coordinate local processes but are not production deployment
+manifests.
+
+The launchers do not provision PostgreSQL, Qdrant, API credentials, source
+PDFs, or speech model files. Those resources must exist before the related
+features can operate. The backend and database must be reachable before visit
+and patient functions can succeed, and Ollama must be ready before local AI
+generation is available.
+
+### Reproducibility record
+
+For each formal demonstration or evaluation, record:
+
+- operating system and version;
+- Python version and installed package versions;
+- Node.js and npm versions;
+- Ollama model name and digest;
+- embedding model version;
+- PostgreSQL schema state and applied migration files;
+- Qdrant collection or immutable snapshot identifier; and
+- relevant environment configuration with all secrets removed.
+
+Python dependencies currently use version ranges, and the repository has no
+single full-stack Compose definition. A locked Python dependency set, automated
+migration ledger, and reviewed full-stack container configuration would reduce
+setup differences between machines.
+
+### Production boundary
+
+The current infrastructure is suitable for local development, testing, and
+demonstration only. A production design would require authenticated identity
+and sessions, restrictive CORS, TLS, managed secrets, monitored service health,
+backup and restore procedures, retention and deletion controls, rate limits,
+and a privacy and security review before any real data could be considered.
 
