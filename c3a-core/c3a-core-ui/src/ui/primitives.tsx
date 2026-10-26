@@ -54,12 +54,16 @@ export function Sheet({ visible, title, onClose, children, footer, busy = false 
   })).current;
   useEffect(() => { if (visible) offset.setValue(0); }, [visible, offset]);
   return <Modal visible={visible} transparent animationType={reduced ? 'none' : 'slide'} onRequestClose={() => !busy && onClose()} statusBarTranslucent>
-    <KeyboardAvoidingView style={tw`flex-1 justify-end bg-black/35`} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={tw`flex-1 justify-end bg-black/35`}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
       <Pressable accessibilityLabel="Close panel" accessibilityRole="button" disabled={busy} onPress={onClose} style={tw`absolute inset-0`} />
       <Animated.View accessibilityViewIsModal style={[tw`w-full max-w-[600px] self-center max-h-[92%] bg-white rounded-t-[28px] overflow-hidden`, { transform: [{ translateY: offset }], paddingBottom: Math.max(inset.bottom, 16) }]}>
         <View {...pan.panHandlers} style={tw`h-8 items-center justify-center`}><View style={tw`w-10 h-1 rounded-full bg-care-line`} /></View>
         <View style={tw`flex-row items-center px-5 pb-3`}><View style={tw`flex-1`}><Heading>{title}</Heading></View><IconButton icon={X} label="Close panel" onPress={onClose} disabled={busy} /></View>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={tw`px-5 pb-3`} style={tw`shrink`} showsVerticalScrollIndicator={false}>{children}</ScrollView>
+        <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={tw`px-5 pb-3`} style={tw`shrink`} showsVerticalScrollIndicator={false}>{children}</ScrollView>
         {footer && <View style={tw`px-5 pt-3`}>{footer}</View>}
       </Animated.View>
     </KeyboardAvoidingView>

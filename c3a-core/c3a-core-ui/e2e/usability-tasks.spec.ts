@@ -126,5 +126,11 @@ test.describe('C3A usability tasks (automated)', () => {
     // The finish-visit form is a 4-step sheet (CarePanels.tsx FinishVisitFormModal)
     // not yet live-verified end to end — confirm step labels/fields if this fails.
     await expect(page.getByText(/Finish visit/)).toBeVisible();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page.getByText('Complete the highlighted required fields before continuing.')).toBeVisible();
+    await expect(page.getByText("Select the patient's overall condition.")).toBeVisible();
+    await expect(page.getByText("How was the patient's overall condition during this visit? *"))
+      .toHaveCSS('color', 'rgb(163, 69, 57)');
+    await expect(page.getByText('Patient condition', { exact: true })).toBeVisible();
   });
 });

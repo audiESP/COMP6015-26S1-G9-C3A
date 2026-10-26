@@ -95,6 +95,11 @@ export function CareScreen() {
   }, [patientId]);
   useEffect(() => { fade.setValue(reducedMotion ? 1 : 0); Animated.timing(fade, { toValue: 1, duration: reducedMotion ? 0 : 200, useNativeDriver: true }).start(); }, [page, fade, reducedMotion]);
   const send = (text: string, files: Attachment[]) => { if (!s || chatLoading) return; void sendMessage(text, files); setAttachments([]); };
+  const revealChatInput = () => {
+    // Wait until the keyboard has resized the viewport before revealing the
+    // newest message and composer at the bottom of the conversation.
+    setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 250);
+  };
   const locked = busy || isSaving || isLoading || chatLoading || generating;
   const closed = s?.visit.status === 'completed';
   const started = !!s && s.visit.status !== 'scheduled';
@@ -139,12 +144,16 @@ export function CareScreen() {
   const visitPages = !['today', 'training'].includes(page);
   const pageHasBack = !['today', 'training', 'translate', 'assistant'].includes(page);
   return <SafeAreaView style={tw`flex-1 bg-care-canvas`} edges={['top', 'left', 'right', 'bottom']}>
-    <KeyboardAvoidingView style={tw`flex-1`} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={tw`flex-1`}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
       <View style={tw`flex-1 w-full max-w-[600px] self-center`}>
         {page !== 'training' && <Header title={routeTitles[page]} eyebrow={page === 'today' ? 'C3A / CARE COMPANION' : s ? `${time(s.visit.scheduledAt)} · ${s.visit.status.replace(/_/g, ' ')}` : 'C3A'} onBack={pageHasBack ? () => navigate(page === 'visit' ? 'today' : 'visit') : undefined} right={page === 'today' ? <IconButton icon={CalendarDays} label="Choose visit date" onPress={openDatePicker} disabled={locked} /> : page === 'assistant' ? <IconButton icon={History} label="Conversation history" onPress={() => open('history')} /> : <IconButton icon={FileText} label="Visit record" onPress={() => navigate('summary')} />} />}
         <View style={tw`flex-1`}>
           <View style={tw.style('flex-1', page !== 'training' && 'hidden')}><TrainingScreen embedded onClose={() => navigate('today')} /></View>
-          <ScrollView ref={scroll} style={tw.style('flex-1', page === 'training' && 'hidden')} keyboardShouldPersistTaps="handled" contentContainerStyle={tw`px-5 pb-6`} refreshControl={page === 'today' ? <RefreshControl refreshing={isLoading} onRefresh={() => void workflow.reload()} tintColor="#176B58" /> : undefined}>
+          <ScrollView ref={scroll} style={tw.style('flex-1', page === 'training' && 'hidden')} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={tw`px-5 pb-6`} refreshControl={page === 'today' ? <RefreshControl refreshing={isLoading} onRefresh={() => void workflow.reload()} tintColor="#176B58" /> : undefined}>
             <Notice text={workflow.error} error /><Notice text={!panel ? operationError : null} error /><Notice text={notice} />
             {isLoading && <View style={tw`py-8 items-center`}><ActivityIndicator color="#176B58" /><Copy muted>Loading visits...</Copy></View>}
             {!s && !isLoading && <Surface><Heading>{workflow.error ? 'Unable to load visits' : 'No visits on this date'}</Heading><Copy muted>{workflow.date} · Choose another day or refresh your schedule.</Copy><View style={tw`mt-4 gap-3`}><Button label="Choose a date" secondary onPress={openDatePicker} /><Button label="Retry connection" onPress={() => void workflow.reload()} /></View></Surface>}
@@ -187,7 +196,7 @@ export function CareScreen() {
             </Animated.View>}
           </ScrollView>
         </View>
-        {page === 'assistant' && s && <ChatInput key={visitId} onSend={send} onPressPlus={() => open('attachments')} isLoading={chatLoading || locked} pendingAttachments={attachments} onRemoveAttachment={id => setAttachments(old => old.filter(a => a.id !== id))} />}
+        {page === 'assistant' && s && <ChatInput key={visitId} onSend={send} onPressPlus={() => open('attachments')} onFocus={revealChatInput} isLoading={chatLoading || locked} pendingAttachments={attachments} onRemoveAttachment={id => setAttachments(old => old.filter(a => a.id !== id))} />}
         <View style={tw`bg-white border border-care-line rounded-[23px] mx-4 mt-2 mb-2 p-1.5 flex-row`}>
           {navItems.map(({ id, label, icon: Icon }) => { const active = page === id || (id === 'today' && !['training', 'translate', 'assistant'].includes(page)); return <Pressable key={id} accessibilityRole="tab" accessibilityState={{ selected: active, disabled: locked }} disabled={locked} onPress={() => navigate(id)} style={tw.style('flex-1 py-2.5 min-h-[56px] items-center justify-center gap-1 rounded-control', active && 'bg-care-soft')}><Icon size={20} strokeWidth={1.7} color={active ? '#176B58' : '#697C75'} /><Text style={tw.style('text-[11px] font-medium', active ? 'text-care-primary' : 'text-care-muted')}>{label}</Text></Pressable>; })}
         </View>

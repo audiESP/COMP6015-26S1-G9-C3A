@@ -38,7 +38,7 @@ export function TrainingScreen({ onClose, embedded = false }: { onClose: () => v
   const materialRow = (material: TrainingMaterial, topic: TrainingTopic) => <Pressable accessibilityRole="button" key={material.id} onPress={() => move({ kind: 'detail', material, topic })} style={tw`bg-white rounded-card p-4 mb-3 flex-row items-start gap-3`}><FileText size={21} color="#176B58" /><View style={tw`flex-1`}><Text style={tw`text-base font-semibold text-care-ink`}>{material.title}</Text><Copy small muted>{material.summary}</Copy><Text style={tw`text-xs text-care-muted mt-2`}>{material.type.toUpperCase()}{material.durationMinutes ? ` · ${material.durationMinutes} min` : ''}</Text></View><ChevronRight size={17} color="#697C75" /></Pressable>;
   return <View style={tw.style('flex-1 bg-care-canvas', !embedded && 'pt-5')}>
     <Header title={view.kind === 'topics' ? 'Learn as you care' : view.kind === 'materials' ? view.topic.title : 'Resource details'} eyebrow="CARE LIBRARY" onBack={view.kind === 'topics' && embedded ? undefined : back} />
-    <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={tw`px-5 pb-6`}>
+    <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={tw`px-5 pb-6`}>
       <Notice error text={error} />{error && <Button label="Retry" onPress={() => setRetry(v => v + 1)} />}
       {view.kind === 'topics' && <><Copy muted>Trusted resources, ready when you need them.</Copy><View style={tw`mt-5`}><Field label="Search resources" value={query} onChangeText={setQuery} placeholder="Topic, title or language" /></View></>}
       {(loading || searching) && <ActivityIndicator style={tw`my-6`} color="#176B58" />}

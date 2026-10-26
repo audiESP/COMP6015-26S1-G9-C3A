@@ -15,6 +15,7 @@ import { Attachment } from '../types';
 interface Props {
   onSend: (text: string, attachments: Attachment[]) => void;
   onPressPlus: () => void;
+  onFocus?: () => void;
   isLoading: boolean;
   pendingAttachments: Attachment[];
   onRemoveAttachment: (id: string) => void;
@@ -23,6 +24,7 @@ interface Props {
 export const ChatInput: React.FC<Props> = ({
   onSend,
   onPressPlus,
+  onFocus,
   isLoading,
   pendingAttachments,
   onRemoveAttachment,
@@ -79,6 +81,7 @@ export const ChatInput: React.FC<Props> = ({
           style={styles.input}
           value={text}
           onChangeText={setText}
+          onFocus={onFocus}
           placeholder={t('chat.placeholder')}
           placeholderTextColor="#A8C0C0"
           multiline

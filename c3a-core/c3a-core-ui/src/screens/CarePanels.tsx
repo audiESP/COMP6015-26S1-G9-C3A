@@ -158,27 +158,72 @@ const overallOutcomeOptions = [
 ];
 
 
-function isCareOutcomeFormComplete(form: CareOutcomeFormAnswers) {
-  const required =
-    Boolean(form.overallCondition) &&
-    Boolean(form.conditionChanged) &&
-    Boolean(form.vitalsRequired) &&
-    Boolean(form.tasksCompleted) &&
-    Boolean(form.medicationRequired) &&
-    form.wellbeingConcerns.length > 0 &&
-    Boolean(form.followUpRequired) &&
-    Boolean(form.overallOutcome) &&
-    form.confirmedAccurate;
+type CareOutcomeRequiredField =
+  | 'overallCondition'
+  | 'conditionChanged'
+  | 'conditionChangeNotes'
+  | 'vitalsRequired'
+  | 'tasksCompleted'
+  | 'incompleteReasons'
+  | 'medicationRequired'
+  | 'medicationStatus'
+  | 'medicationConcernNotes'
+  | 'wellbeingConcerns'
+  | 'wellbeingOther'
+  | 'followUpRequired'
+  | 'followUpDetails'
+  | 'overallOutcome'
+  | 'confirmedAccurate';
 
-  if (!required) return false;
-  if (form.conditionChanged === 'Yes' && !form.conditionChangeNotes.trim()) return false;
-  if (form.tasksCompleted !== 'Yes' && form.incompleteReasons.length === 0 && !form.incompleteOther.trim()) return false;
-  if (form.medicationRequired === 'Yes' && !form.medicationStatus) return false;
-  if (form.medicationRequired === 'Yes' && form.medicationStatus && form.medicationStatus !== 'Completed' && !form.medicationConcernNotes.trim()) return false;
-  if (form.medicationConcern === 'Yes' && !form.medicationConcernNotes.trim()) return false;
-  if (form.wellbeingConcerns.includes('Other') && !form.wellbeingOther.trim()) return false;
-  if (form.followUpRequired !== 'No follow-up required' && !form.followUpDetails.trim()) return false;
-  return true;
+type CareOutcomeValidationErrors = Partial<Record<CareOutcomeRequiredField, string>>;
+
+function careOutcomeStepErrors(step: number, form: CareOutcomeFormAnswers): CareOutcomeValidationErrors {
+  const errors: CareOutcomeValidationErrors = {};
+
+  if (step === 0) {
+    if (!form.overallCondition) errors.overallCondition = "Select the patient's overall condition.";
+    if (!form.conditionChanged) errors.conditionChanged = 'Choose whether the condition changed.';
+    if (form.conditionChanged === 'Yes' && !form.conditionChangeNotes.trim()) {
+      errors.conditionChangeNotes = 'Describe the change in condition.';
+    }
+    if (!form.vitalsRequired) errors.vitalsRequired = 'Choose whether vital signs were required or taken.';
+  }
+
+  if (step === 1) {
+    if (!form.tasksCompleted) errors.tasksCompleted = 'Choose whether all scheduled care tasks were completed.';
+    if (form.tasksCompleted && form.tasksCompleted !== 'Yes' && form.incompleteReasons.length === 0 && !form.incompleteOther.trim()) {
+      errors.incompleteReasons = 'Select a reason or enter another reason below.';
+    }
+    if (!form.medicationRequired) errors.medicationRequired = 'Choose whether medication support was required.';
+    if (form.medicationRequired === 'Yes' && !form.medicationStatus) {
+      errors.medicationStatus = 'Select the medication support status.';
+    }
+    if (form.medicationRequired === 'Yes' && form.medicationStatus && form.medicationStatus !== 'Completed' && !form.medicationConcernNotes.trim()) {
+      errors.medicationConcernNotes = 'Record the reason for this medication support status.';
+    }
+    if (form.medicationConcern === 'Yes' && !form.medicationConcernNotes.trim()) {
+      errors.medicationConcernNotes = 'Describe the medication concern.';
+    }
+    if (form.wellbeingConcerns.length === 0) errors.wellbeingConcerns = 'Select at least one wellbeing observation.';
+    if (form.wellbeingConcerns.includes('Other') && !form.wellbeingOther.trim()) {
+      errors.wellbeingOther = 'Describe the other concern.';
+    }
+  }
+
+  if (step === 2) {
+    if (!form.followUpRequired) errors.followUpRequired = 'Select the required follow-up.';
+    if (form.followUpRequired && form.followUpRequired !== 'No follow-up required' && !form.followUpDetails.trim()) {
+      errors.followUpDetails = 'Describe the required follow-up.';
+    }
+    if (!form.overallOutcome) errors.overallOutcome = 'Select the overall visit outcome.';
+    if (!form.confirmedAccurate) errors.confirmedAccurate = 'Confirm the record is accurate before continuing.';
+  }
+
+  return errors;
+}
+
+function isCareOutcomeFormComplete(form: CareOutcomeFormAnswers) {
+  return [0, 1, 2].every((step) => Object.keys(careOutcomeStepErrors(step, form)).length === 0);
 }
 
 
@@ -203,7 +248,11 @@ function RiskReviewModal({
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}>
+      <KeyboardAvoidingView
+        style={styles.modalBackdrop}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
         <View style={styles.finishModal}>
           <View style={styles.finishModalHeader}>
             <View style={styles.currentTaskCopy}>
@@ -217,7 +266,12 @@ function RiskReviewModal({
               <Text style={styles.modalCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView style={styles.finishFormScroll} contentContainerStyle={styles.finishFormContent}>
+          <ScrollView
+            style={styles.finishFormScroll}
+            contentContainerStyle={styles.finishFormContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
             <TextField label="Observation or care-worker note" value={note} onChange={onChange} />
             {error && <Text style={styles.errorText}>{error}</Text>}
             {suggestions.length === 0 && !loading && !error && (
@@ -246,7 +300,7 @@ function RiskReviewModal({
             />
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -278,6 +332,7 @@ function FinishVisitFormModal({
   onClose: () => void;
 }) {
   const [step, setStep] = useState(0);
+  const [validationAttempts, setValidationAttempts] = useState<Record<number, boolean>>({});
   const stepNames = ['Patient condition', 'Care and observations', 'Follow-up and outcome', 'Review report'];
   const update = (patch: Partial<CareOutcomeFormAnswers>) => onChange({ ...form, ...patch });
   const updateVitals = (key: string, value: string) => update({ vitals: { ...form.vitals, [key]: value } });
@@ -288,11 +343,29 @@ function FinishVisitFormModal({
       : [...current, value];
     update({ [key]: next } as Pick<CareOutcomeFormAnswers, typeof key>);
   };
+  const stepErrors = careOutcomeStepErrors(step, form);
+  const visibleErrors = validationAttempts[step] ? stepErrors : {};
+  const hasVisibleErrors = Object.keys(visibleErrors).length > 0;
+  const continueToNextStep = () => {
+    setValidationAttempts((current) => ({ ...current, [step]: true }));
+    if (Object.keys(stepErrors).length > 0) return;
+    setStep((current) => current + 1);
+  };
+
+  useEffect(() => {
+    if (!visible) {
+      setStep(0);
+      setValidationAttempts({});
+    }
+  }, [visible]);
 
   return <Sheet visible={visible} title={`Finish visit · ${step + 1} / 4`} onClose={onClose} busy={isGenerating || isSaving}
     footer={<View style={tw`gap-2`}>
       {step > 0 && <Button secondary label="Previous step" disabled={isGenerating || isSaving} onPress={() => setStep(step - 1)} />}
-      {step < 3 ? <Button label="Continue" onPress={() => setStep(step + 1)} /> : <>
+      {step < 3 ? <>
+        {hasVisibleErrors && <Notice error text="Complete the highlighted required fields before continuing." />}
+        <Button label="Continue" onPress={continueToNextStep} />
+      </> : <>
         {!canGenerate && <Notice text="Complete the required questions in the previous steps and confirm the record before generating your report." />}
         <Button label={isGenerating ? 'Generating report...' : report ? 'Regenerate report' : 'Generate visit report'} onPress={onGenerate} disabled={!canGenerate || isSaving} busy={isGenerating} />
         <Button label="Review and finish visit" secondary onPress={onFinish} disabled={!report || !canGenerate || isGenerating || isSaving} />
@@ -302,15 +375,15 @@ function FinishVisitFormModal({
     <View style={tw`mb-4`}><Heading>{stepNames[step]}</Heading></View>
 
             {step === 0 && (<FormSection title="1. Patient Condition">
-              <SingleChoice label="How was the patient's overall condition during this visit? *" value={form.overallCondition} options={overallConditionOptions} onChange={(overallCondition) => update({ overallCondition })} />
-              <SingleChoice label="Were there any noticeable changes in the patient's condition? *" value={form.conditionChanged} options={yesNoOptions} onChange={(conditionChanged) => update({ conditionChanged })} />
+              <SingleChoice error={visibleErrors.overallCondition} label="How was the patient's overall condition during this visit? *" value={form.overallCondition} options={overallConditionOptions} onChange={(overallCondition) => update({ overallCondition })} />
+              <SingleChoice error={visibleErrors.conditionChanged} label="Were there any noticeable changes in the patient's condition? *" value={form.conditionChanged} options={yesNoOptions} onChange={(conditionChanged) => update({ conditionChanged })} />
               {form.conditionChanged === 'Yes' && (
-                <TextField label="If Yes, please describe *" value={form.conditionChangeNotes} onChange={(conditionChangeNotes) => update({ conditionChangeNotes })} />
+                <TextField error={visibleErrors.conditionChangeNotes} label="If Yes, please describe *" value={form.conditionChangeNotes} onChange={(conditionChangeNotes) => update({ conditionChangeNotes })} />
               )}
             </FormSection>)}
 
             {step === 0 && (<FormSection title="2. Vital Signs">
-              <SingleChoice label="Were vital signs required or taken during this visit? *" value={form.vitalsRequired} options={vitalsRequiredOptions} onChange={(vitalsRequired) => update({ vitalsRequired })} />
+              <SingleChoice error={visibleErrors.vitalsRequired} label="Were vital signs required or taken during this visit? *" value={form.vitalsRequired} options={vitalsRequiredOptions} onChange={(vitalsRequired) => update({ vitalsRequired })} />
               {form.vitalsRequired === 'Yes' && (
                 <View style={styles.vitalsGrid}>
                   <TextField compact label="BP systolic" value={form.vitals.bloodPressureSystolic} onChange={(value) => updateVitals('bloodPressureSystolic', value)} keyboardType="numeric" />
@@ -330,10 +403,10 @@ function FinishVisitFormModal({
             </FormSection>)}
 
             {step === 1 && (<FormSection title="3. Care Task Outcomes">
-              <SingleChoice label="Were all scheduled care tasks completed? *" value={form.tasksCompleted} options={tasksCompletedOptions} onChange={(tasksCompleted) => update({ tasksCompleted })} />
+              <SingleChoice error={visibleErrors.tasksCompleted} label="Were all scheduled care tasks completed? *" value={form.tasksCompleted} options={tasksCompletedOptions} onChange={(tasksCompleted) => update({ tasksCompleted })} />
               {form.tasksCompleted && form.tasksCompleted !== 'Yes' && (
                 <>
-                  <MultiChoice label="If not all tasks were completed, select the reason *" values={form.incompleteReasons} options={incompleteReasonOptions} onToggle={(value) => toggleList('incompleteReasons', value)} />
+                  <MultiChoice error={visibleErrors.incompleteReasons} label="If not all tasks were completed, select the reason *" values={form.incompleteReasons} options={incompleteReasonOptions} onToggle={(value) => toggleList('incompleteReasons', value)} />
                   <TextField label="Other reason" value={form.incompleteOther} onChange={(incompleteOther) => update({ incompleteOther })} />
                 </>
               )}
@@ -341,43 +414,46 @@ function FinishVisitFormModal({
             </FormSection>)}
 
             {step === 1 && (<FormSection title="4. Medication Support Outcome">
-              <SingleChoice label="Was medication support required during this visit? *" value={form.medicationRequired} options={yesNoOptions} onChange={(medicationRequired) => update({ medicationRequired })} />
+              <SingleChoice error={visibleErrors.medicationRequired} label="Was medication support required during this visit? *" value={form.medicationRequired} options={yesNoOptions} onChange={(medicationRequired) => update({ medicationRequired })} />
               {form.medicationRequired === 'Yes' && (
-                <SingleChoice label="Medication support status *" value={form.medicationStatus} options={medicationStatusOptions} onChange={(medicationStatus) => update({ medicationStatus })} />
+                <SingleChoice error={visibleErrors.medicationStatus} label="Medication support status *" value={form.medicationStatus} options={medicationStatusOptions} onChange={(medicationStatus) => update({ medicationStatus })} />
               )}
               {form.medicationRequired === 'Yes' && form.medicationStatus && form.medicationStatus !== 'Completed' && (
-                <TextField label="Notes or reason for medication support status *" value={form.medicationConcernNotes} onChange={(medicationConcernNotes) => update({ medicationConcernNotes })} />
+                <TextField error={visibleErrors.medicationConcernNotes} label="Notes or reason for medication support status *" value={form.medicationConcernNotes} onChange={(medicationConcernNotes) => update({ medicationConcernNotes })} />
               )}
               <SingleChoice label="Were there any medication-related concerns?" value={form.medicationConcern} options={yesNoOptions} onChange={(medicationConcern) => update({ medicationConcern })} />
               {form.medicationConcern === 'Yes' && (
-                <TextField label="Describe the medication concern *" value={form.medicationConcernNotes} onChange={(medicationConcernNotes) => update({ medicationConcernNotes })} />
+                <TextField error={visibleErrors.medicationConcernNotes} label="Describe the medication concern *" value={form.medicationConcernNotes} onChange={(medicationConcernNotes) => update({ medicationConcernNotes })} />
               )}
             </FormSection>)}
 
             {step === 1 && (<FormSection title="5. Patient Wellbeing and Observations">
-              <MultiChoice label="Did you observe any new concerns during the visit? *" values={form.wellbeingConcerns} options={[...wellbeingConcernOptions, 'Other']} onToggle={(value) => toggleList('wellbeingConcerns', value)} />
+              <MultiChoice error={visibleErrors.wellbeingConcerns} label="Did you observe any new concerns during the visit? *" values={form.wellbeingConcerns} options={[...wellbeingConcernOptions, 'Other']} onToggle={(value) => toggleList('wellbeingConcerns', value)} />
               {form.wellbeingConcerns.includes('Other') && (
-                <TextField label="Other concern *" value={form.wellbeingOther} onChange={(wellbeingOther) => update({ wellbeingOther })} />
+                <TextField error={visibleErrors.wellbeingOther} label="Other concern *" value={form.wellbeingOther} onChange={(wellbeingOther) => update({ wellbeingOther })} />
               )}
               <TextField label="Observation notes" value={form.observationNotes} onChange={(observationNotes) => update({ observationNotes })} />
             </FormSection>)}
 
             {step === 2 && (<FormSection title="6. Follow-up Required">
-              <SingleChoice label="Does this visit require follow-up action? *" value={form.followUpRequired} options={followUpOptions} onChange={(followUpRequired) => update({ followUpRequired })} />
+              <SingleChoice error={visibleErrors.followUpRequired} label="Does this visit require follow-up action? *" value={form.followUpRequired} options={followUpOptions} onChange={(followUpRequired) => update({ followUpRequired })} />
               {form.followUpRequired && form.followUpRequired !== 'No follow-up required' && (
-                <TextField label="Follow-up details *" value={form.followUpDetails} onChange={(followUpDetails) => update({ followUpDetails })} />
+                <TextField error={visibleErrors.followUpDetails} label="Follow-up details *" value={form.followUpDetails} onChange={(followUpDetails) => update({ followUpDetails })} />
               )}
             </FormSection>)}
 
             {step === 2 && (<FormSection title="7. Overall Visit Outcome">
-              <SingleChoice label="Select the overall outcome of this visit *" value={form.overallOutcome} options={overallOutcomeOptions} onChange={(overallOutcome) => update({ overallOutcome })} />
+              <SingleChoice error={visibleErrors.overallOutcome} label="Select the overall outcome of this visit *" value={form.overallOutcome} options={overallOutcomeOptions} onChange={(overallOutcome) => update({ overallOutcome })} />
               <TextField label="Final HCW comments" value={form.finalComments} onChange={(finalComments) => update({ finalComments })} />
-              <TouchableOpacity style={styles.confirmRow} onPress={() => update({ confirmedAccurate: !form.confirmedAccurate })} activeOpacity={0.75}>
-                <View style={[styles.taskCheck, form.confirmedAccurate && styles.taskCheckDone]}>
-                  <Text style={styles.taskCheckText}>{form.confirmedAccurate ? '✓' : ''}</Text>
-                </View>
-                <Text style={styles.confirmText}>I confirm the information recorded above is accurate to the best of my knowledge. *</Text>
-              </TouchableOpacity>
+              <View style={[visibleErrors.confirmedAccurate && styles.validationGroupError]}>
+                <TouchableOpacity style={styles.confirmRow} onPress={() => update({ confirmedAccurate: !form.confirmedAccurate })} activeOpacity={0.75}>
+                  <View style={[styles.taskCheck, form.confirmedAccurate && styles.taskCheckDone, visibleErrors.confirmedAccurate && styles.validationControlError]}>
+                    <Text style={styles.taskCheckText}>{form.confirmedAccurate ? '✓' : ''}</Text>
+                  </View>
+                  <Text style={[styles.confirmText, visibleErrors.confirmedAccurate && styles.fieldLabelError]}>I confirm the information recorded above is accurate to the best of my knowledge. *</Text>
+                </TouchableOpacity>
+                {visibleErrors.confirmedAccurate && <Text style={styles.validationErrorText}>{visibleErrors.confirmedAccurate}</Text>}
+              </View>
             </FormSection>)}
 
             {step === 3 && (<View style={styles.reportPanel}>
@@ -411,15 +487,17 @@ function SingleChoice({
   value,
   options,
   onChange,
+  error,
 }: {
   label: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
+  error?: string;
 }) {
   return (
-    <View style={styles.fieldBlock}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+    <View style={[styles.fieldBlock, error && styles.validationGroupError]}>
+      <Text style={[styles.fieldLabel, error && styles.fieldLabelError]}>{label}</Text>
       <View style={styles.choiceWrap}>
         {options.map((option) => (
           <TouchableOpacity
@@ -432,6 +510,7 @@ function SingleChoice({
           </TouchableOpacity>
         ))}
       </View>
+      {error && <Text style={styles.validationErrorText}>{error}</Text>}
     </View>
   );
 }
@@ -442,15 +521,17 @@ function MultiChoice({
   values,
   options,
   onToggle,
+  error,
 }: {
   label: string;
   values: string[];
   options: string[];
   onToggle: (value: string) => void;
+  error?: string;
 }) {
   return (
-    <View style={styles.fieldBlock}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+    <View style={[styles.fieldBlock, error && styles.validationGroupError]}>
+      <Text style={[styles.fieldLabel, error && styles.fieldLabelError]}>{label}</Text>
       <View style={styles.choiceWrap}>
         {options.map((option) => {
           const active = values.includes(option);
@@ -466,6 +547,7 @@ function MultiChoice({
           );
         })}
       </View>
+      {error && <Text style={styles.validationErrorText}>{error}</Text>}
     </View>
   );
 }
@@ -477,18 +559,20 @@ function TextField({
   onChange,
   keyboardType = 'default',
   compact = false,
+  error,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   keyboardType?: 'default' | 'numeric';
   compact?: boolean;
+  error?: string;
 }) {
   return (
     <View style={[styles.fieldBlock, compact && styles.compactField]}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={[styles.fieldLabel, error && styles.fieldLabelError]}>{label}</Text>
       <TextInput
-        style={[styles.textInput, !compact && styles.textArea]}
+        style={[styles.textInput, !compact && styles.textArea, error && styles.validationControlError]}
         value={value}
         onChangeText={onChange}
         keyboardType={keyboardType}
@@ -496,6 +580,7 @@ function TextField({
         placeholder="Enter details"
         placeholderTextColor="#8A9B93"
       />
+      {error && <Text style={styles.validationErrorText}>{error}</Text>}
     </View>
   );
 }
@@ -1452,6 +1537,10 @@ const styles = {
   formSectionTitle: tw.style('text-care-ink text-[16px] font-semibold'),
   fieldBlock: tw.style('gap-[7px]'),
   fieldLabel: tw.style('text-[#3D4E47] text-[12px] font-semibold leading-[17px]'),
+  fieldLabelError: tw.style('text-care-danger'),
+  validationGroupError: tw.style('border-[1px] border-care-danger bg-[#FFF5F3] rounded-[12px] p-[10px]'),
+  validationControlError: tw.style('border-care-danger bg-[#FFF5F3]'),
+  validationErrorText: tw.style('text-care-danger text-[12px] font-semibold leading-[17px]'),
   choiceWrap: tw.style('flex-row flex-wrap gap-[7px]'),
   choiceButton: tw.style('min-h-[44px] rounded-[20px] border-[1px] border-[#C9D7D1] bg-care-canvas px-[10px] py-[8px]'),
   choiceButtonActive: tw.style('bg-care-primary border-care-primary'),

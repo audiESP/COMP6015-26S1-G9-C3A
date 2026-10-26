@@ -92,13 +92,18 @@ export const PatientModal: React.FC<Props> = ({
     >
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
       >
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <Text style={styles.title}>{t('patient.title')}</Text>
 
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
             {field('name', t('patient.name'), 'Zhang San')}
             {field('age', t('patient.age'), '45', false)}
             {field('gender', t('patient.gender'), 'Male / Female')}

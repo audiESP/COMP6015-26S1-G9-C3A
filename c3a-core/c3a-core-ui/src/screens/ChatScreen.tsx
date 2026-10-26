@@ -190,6 +190,8 @@ export const ChatScreen: React.FC<Props> = ({ apiBaseUrl, onClose }) => {
         <FlatList
           ref={flatListRef}
           data={messages}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           keyExtractor={(m) => m.id}
           ListEmptyComponent={renderEmpty}
           ListFooterComponent={renderTypingIndicator}
