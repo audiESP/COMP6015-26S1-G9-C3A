@@ -202,6 +202,30 @@ class ChatOrchestrationTest(unittest.TestCase):
         self.assertNotEqual(response.json()["rag"].get("answer_method"), "structured_current_record")
         self.assertIsNotNone(self.service.last_messages)
 
+    def test_visit_report_prompt_is_not_replaced_by_medication_direct_reply(self):
+        payload = _chat_payload(
+            "Generate a standardised home-care visit report for records. "
+            "Include Main Matters, Medication Support outcome, and Attention Required."
+        )
+        payload["workerContext"] = {"id": "worker-1", "name": "Worker One"}
+        payload["visitContext"] = {"id": "visit-1", "scheduledAt": "2026-10-26T09:30:00+08:00"}
+        payload["medicationSupportContext"] = {
+            "status": "Completed",
+            "medicationNames": ["Medicine A"],
+        }
+
+        response = self.client.post("/ai/chat", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(self.service.last_messages)
+        self.assertNotEqual(
+            response.json()["rag"].get("answer_method"),
+            "structured_current_record",
+        )
+        self.assertEqual(response.json()["rag"]["route"]["effective_mode"], "direct_ai")
+        self.assertEqual(self.db.calls, 0)
+        self.assertEqual(self.rag.calls, 0)
+
     def test_updated_task_uses_current_structured_status_without_model(self):
         payload = _chat_payload("What is the status of this patient's current task?")
         payload["messages"] += [

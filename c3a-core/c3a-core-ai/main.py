@@ -391,6 +391,13 @@ def _latest_user_query(messages: list[ChatMessage]) -> str:
     return ""
 
 
+def _is_visit_report_generation(query: str) -> bool:
+    lowered = query.casefold()
+    return "visit report" in lowered and any(
+        term in lowered for term in ("generate", "create", "write", "draft")
+    )
+
+
 def _preview(text: str, limit: int = 180) -> str:
     compact = " ".join(text.split())
     if len(compact) <= limit:
@@ -856,12 +863,24 @@ async def _prepare_chat(req: AiChatRequest) -> PreparedChat:
             status_code=422,
             detail="The configured local Llama model does not support attachments",
         )
-    initial_route = decide_route(
-        latest_user_query,
-        req.patientContext,
-        req.attachments,
-        req.currentTaskContext,
-    )
+    if _is_visit_report_generation(latest_user_query):
+        # The report request already carries the complete visit record. External
+        # database or guideline retrieval could mix unrelated facts into it.
+        initial_route = RouteDecision(
+            mode="direct_ai",
+            uses_db=False,
+            uses_rag=False,
+            confidence=1.0,
+            reason="Visit report generation uses only the supplied visit record.",
+            matched_signals=["visit_report_generation"],
+        )
+    else:
+        initial_route = decide_route(
+            latest_user_query,
+            req.patientContext,
+            req.attachments,
+            req.currentTaskContext,
+        )
     logger.info(
         "AI POST /ai/chat received messages=%s attachments=%s patient_context=%s route=%s route_confidence=%.2f latest_user_preview=%r",
         len(req.messages),
@@ -935,6 +954,11 @@ def _generation_kwargs(req: AiChatRequest, prepared: PreparedChat) -> dict[str, 
 
 def _direct_reply(req: AiChatRequest) -> str | None:
     """Return a structured answer when the question can be answered from fields alone."""
+    # Visit reports are broad generation requests. Their prompts mention narrow
+    # fields such as medication-support "outcome" and "record", but must not be
+    # collapsed into one of the deterministic single-field answers below.
+    if _is_visit_report_generation(_latest_user_query(req.messages)):
+        return None
     return (
         _missing_patient_reply(req)
         or _current_record_reply(req)

@@ -199,6 +199,27 @@ class VisitReportEndpointTests(unittest.TestCase):
         self.assertEqual(response.json(), {"report": "Visit summary text."})
 
     @patch("main.ai_client.chat")
+    def test_report_prompt_requires_identity_date_main_matters_and_attention(self, chat):
+        chat.return_value = AiChatResponse(reply="Complete report text.")
+        payload = self._payload()
+        payload["visitContext"]["scheduledAt"] = "2026-10-26T09:30:00+08:00"
+
+        response = self.client.post("/visits/visit-1/report", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        request = chat.await_args.args[0]
+        prompt = request.messages[-1].content
+        for expected in (
+            "Patient Name: Patient One",
+            "Care Worker Name: Worker One",
+            "Visit Date: 2026-10-26",
+            "Main Matters:",
+            "Attention Required:",
+        ):
+            self.assertIn(expected, prompt)
+        self.assertIn("never return only a warning", prompt)
+
+    @patch("main.ai_client.chat")
     def test_report_generation_surfaces_ai_unavailability_as_502(self, chat):
         chat.side_effect = AiServiceUnavailable("boom")
 
