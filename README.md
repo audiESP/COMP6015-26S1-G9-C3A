@@ -189,6 +189,35 @@ check environment completeness, report any synchronization that a normal run
 would perform, and check commands, files, pip, and UI dependencies without
 copying or installing anything, starting services, or downloading the model.
 
+#### Using `.env` files kept outside the repository
+
+Any launcher also accepts a folder that holds your `.env` files in the same
+layout as the repository:
+
+```text
+my-secrets/
+└── c3a-core/
+    ├── c3a-core-ai/.env
+    ├── c3a-core-api/.env
+    └── c3a-core-ui/.env
+```
+
+```bash
+./start-macos.command /path/to/my-secrets
+./start-linux.sh /path/to/my-secrets
+```
+
+```powershell
+.\start-windows.bat C:\path\to\my-secrets
+```
+
+Before the normal validation runs, every `.env` in that folder is checked
+against its `.env.example`; a missing file or key stops startup without
+changing anything. Valid files are then copied into the repository, and any
+different existing `.env` is first backed up as `.env.pre-sync.bak`. Combine
+it with `--check` (for example `./start-macos.command --check /path/to/my-secrets`)
+to validate the folder without copying.
+
 If environment validation or synchronization fails, a required command,
 entrypoint, requirements file, or package environment is missing, or an
 installation, Ollama startup, or model download fails, the launcher stops and
@@ -196,6 +225,42 @@ displays the specific reason. Windows uses a system warning dialog and macOS
 uses a native alert. Linux uses `zenity` or `kdialog` when available, with
 `notify-send` as a desktop-notification fallback. Headless Linux environments
 always receive the same error in the terminal because no GUI is available.
+
+#### macOS: step-by-step startup with the iOS Simulator
+
+Requires Xcode with the iOS Simulator, Expo Go installed in the simulator,
+Ollama, Node.js, and Python 3.11 or newer. For the simulator, set
+`EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000` in the UI `.env`, because the
+simulator reaches services on the Mac through `127.0.0.1`.
+
+Terminal 1, from the repository root:
+
+```bash
+cd c3a-core
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r c3a-core-api/requirements.txt -r c3a-core-ai/requirements.txt
+cd c3a-core-ui && npm ci && cd ../..
+bash ./start-macos.command /path/to/my-secrets
+```
+
+The launcher picks up `c3a-core/.venv` automatically and keeps running in the
+foreground; wait until Expo reports that Metro is running on port 8081. Omit
+the folder argument if the `.env` files are already in the repository.
+
+Terminal 2, after the services have started:
+
+```bash
+open -a Simulator
+xcrun simctl openurl booted exp://127.0.0.1:8081
+```
+
+Wait for the simulator to finish booting before running `openurl`. Optionally,
+set the simulator's location to the visit's planned coordinates so the check-in
+location check passes:
+
+```bash
+xcrun simctl location booted set <latitude>,<longitude>
+```
 
 ### 4. Manual startup (optional)
 

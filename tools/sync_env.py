@@ -125,6 +125,67 @@ def copy_atomically(source: Path, destination: Path) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def import_env_files(
+    root: Path, source_root: Path, repository_root: Path, check_only: bool
+) -> None:
+    """Copy each .env from source_root, mirroring the .env.example layout under root."""
+    examples = discover(root, ".env.example")
+    if not examples:
+        raise EnvSyncError(f"No .env.example files were found under {root}.")
+
+    plan: list[tuple[Path, Path]] = []
+    problems: list[str] = []
+    for example in examples:
+        relative = example.parent.relative_to(root) / ".env"
+        source = source_root / relative
+        destination = example.with_name(".env")
+        if not source.is_file():
+            problems.append(f"{source} is missing")
+            continue
+        reasons = incomplete_reasons(
+            parse_env(source, repository_root, allow_empty=True),
+            parse_env(example, repository_root),
+        )
+        if reasons:
+            problems.append(f"{source}: {'; '.join(reasons)}")
+            continue
+        plan.append((source, destination))
+
+    if problems:
+        raise EnvSyncError(
+            f"Cannot import environment files from {source_root}: {'; '.join(problems)}"
+        )
+
+    for source, destination in plan:
+        relative_destination = display_path(destination, repository_root)
+        if destination.exists() and destination.read_bytes() == source.read_bytes():
+            print(f"ENV IMPORT: {relative_destination} already matches {source}")
+            continue
+        if check_only:
+            print(f"ENV CHECK: normal startup will import {source} -> {relative_destination}")
+            continue
+
+        if destination.exists():
+            backup = destination.with_name(".env.pre-sync.bak")
+            try:
+                shutil.copy2(destination, backup)
+            except OSError as exc:
+                raise EnvSyncError(
+                    f"Cannot back up {relative_destination} before import: {exc}"
+                ) from exc
+            backup_note = f"; previous file saved as {display_path(backup, repository_root)}"
+        else:
+            backup_note = ""
+
+        try:
+            copy_atomically(source, destination)
+        except OSError as exc:
+            raise EnvSyncError(
+                f"Cannot copy {source} to {relative_destination}: {exc}"
+            ) from exc
+        print(f"ENV IMPORTED: {source} -> {relative_destination}{backup_note}")
+
+
 def validate_and_sync(root: Path, repository_root: Path, check_only: bool) -> None:
     examples = discover(root, ".env.example")
     env_files = discover(root, ".env")
@@ -236,6 +297,11 @@ def main() -> int:
         action="store_true",
         help="Validate and report differences without copying files",
     )
+    parser.add_argument(
+        "--import-from",
+        type=Path,
+        help="Folder holding .env files laid out like the repository; copied in first",
+    )
     args = parser.parse_args()
     root = args.root.resolve()
     repository_root = Path(__file__).resolve().parent.parent
@@ -245,6 +311,18 @@ def main() -> int:
         return 2
 
     try:
+        if args.import_from is not None:
+            source_root = args.import_from.expanduser().resolve()
+            if not source_root.is_dir():
+                raise EnvSyncError(
+                    f"Environment folder does not exist or is not a directory: {source_root}"
+                )
+            if source_root != root:
+                import_env_files(root, source_root, repository_root, args.check)
+                if args.check:
+                    # Imported files were already validated against their examples.
+                    print(f"ENV VALID: all .env files in {source_root} are complete.")
+                    return 0
         validate_and_sync(root, repository_root, args.check)
     except EnvSyncError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

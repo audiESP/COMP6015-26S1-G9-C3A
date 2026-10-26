@@ -12,6 +12,22 @@ API_DIR="$CORE_DIR/c3a-core-api"
 AI_DIR="$CORE_DIR/c3a-core-ai"
 ENV_SYNC_SCRIPT="$SCRIPT_DIR/tools/sync_env.py"
 OLLAMA_MODEL="llama3.1:8b-instruct-q4_K_M"
+CHECK_ONLY=false
+ENV_SOURCE_DIR=""
+
+# Usage: ./<launcher> [--check] [ENV_FOLDER]
+# ENV_FOLDER holds .env files laid out like this repository, e.g.
+# ENV_FOLDER/c3a-core/c3a-core-api/.env; they are copied in before startup.
+for arg in "$@"; do
+  case "$arg" in
+    --check) CHECK_ONLY=true ;;
+    -*) printf 'ERROR: Unknown option: %s\n' "$arg" >&2; exit 2 ;;
+    *)
+      [[ -z "$ENV_SOURCE_DIR" ]] || { printf 'ERROR: Only one environment folder may be given.\n' >&2; exit 2; }
+      ENV_SOURCE_DIR="$arg"
+      ;;
+  esac
+done
 
 show_warning() {
   if command -v osascript >/dev/null 2>&1; then
@@ -43,16 +59,12 @@ find_python() {
 
 run_env_sync() {
   local output
-  if [[ "${1:-}" == "--check" ]]; then
-    if output="$("$API_PYTHON" "$ENV_SYNC_SCRIPT" --root "$SCRIPT_DIR" --check 2>&1)"; then
-      printf '%s\n' "$output"
-      return 0
-    fi
-  else
-    if output="$("$API_PYTHON" "$ENV_SYNC_SCRIPT" --root "$SCRIPT_DIR" 2>&1)"; then
-      printf '%s\n' "$output"
-      return 0
-    fi
+  local sync_args=(--root "$SCRIPT_DIR")
+  [[ "$CHECK_ONLY" == true ]] && sync_args+=(--check)
+  [[ -n "$ENV_SOURCE_DIR" ]] && sync_args+=(--import-from "$ENV_SOURCE_DIR")
+  if output="$("$API_PYTHON" "$ENV_SYNC_SCRIPT" "${sync_args[@]}" 2>&1)"; then
+    printf '%s\n' "$output"
+    return 0
   fi
   [[ -n "$output" ]] || output="Environment validation failed without an error message."
   fail "${output#ERROR: }"
@@ -80,8 +92,8 @@ AI_PYTHON="$(find_python "$AI_DIR")" || fail "Python 3 was not found. Create .ve
 "$API_PYTHON" -m pip --version >/dev/null 2>&1 || fail "pip is unavailable for the API Python environment."
 "$AI_PYTHON" -m pip --version >/dev/null 2>&1 || fail "pip is unavailable for the AI Python environment."
 
-if [[ "${1:-}" == "--check" ]]; then
-  run_env_sync --check
+if [[ "$CHECK_ONLY" == true ]]; then
+  run_env_sync
   printf 'C3A startup preflight passed.\n'
   printf 'API Python: %s\n' "$API_PYTHON"
   printf 'AI Python:  %s\n' "$AI_PYTHON"
