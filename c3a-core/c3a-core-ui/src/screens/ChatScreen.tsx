@@ -144,7 +144,7 @@ export const ChatScreen: React.FC<Props> = ({ apiBaseUrl, onClose }) => {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
       >
         {/* ── Header ── */}

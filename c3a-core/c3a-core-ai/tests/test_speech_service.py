@@ -15,6 +15,8 @@ class _FakeStream:
         self.result = SimpleNamespace(text="")
 
     def accept_waveform(self, sample_rate, samples):
+        if not isinstance(samples, np.ndarray) or samples.dtype != np.float32:
+            raise TypeError("recognizer requires a float32 NumPy array")
         self.samples = samples
 
 
@@ -23,8 +25,11 @@ class _FakeRecognizer:
         return _FakeStream()
 
     def decode_stream(self, stream):
+        if stream.samples[0] != 0 or stream.samples[-1] != 0:
+            raise ValueError("recognizer input requires boundary context")
         # The first sample identifies the synthetic VAD segment in this test.
-        stream.result.text = {1.0: "first phrase", 2.0: "final phrase"}[float(stream.samples[0])]
+        speech_samples = stream.samples[stream.samples != 0]
+        stream.result.text = {1.0: "first phrase", 2.0: "final phrase"}[float(speech_samples[0])]
 
 
 class _FakeVad:
@@ -47,7 +52,8 @@ class _FakeVad:
 
     @property
     def front(self):
-        return self.queued[0]
+        # Match sherpa-onnx's Python binding, which exposes samples as a list.
+        return SimpleNamespace(samples=self.queued[0].samples.tolist())
 
     def pop(self):
         self.queued.pop(0)

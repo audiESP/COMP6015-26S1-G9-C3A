@@ -84,7 +84,7 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(requests[-1].content)
         self.assertEqual(payload["options"]["num_predict"], service.report_num_predict)
 
-    async def test_translate_text_detects_language_and_posts_non_streaming_payload(self):
+    async def test_translate_text_uses_plain_non_streaming_generate_payload(self):
         requests = []
         service = None
 
@@ -95,35 +95,21 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
                     200,
                     json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
                 )
-            return httpx.Response(
-                200,
-                json={
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "sourceLanguage": "English",
-                                "targetLanguage": "Spanish",
-                                "translatedText": "Buenos dias.",
-                            }
-                        )
-                    }
-                },
-            )
+            return httpx.Response(200, json={"response": "Buenos dias."})
 
         service = OllamaService(transport=httpx.MockTransport(handler))
         result = await service.translate_text("Good morning.", "Spanish")
 
-        self.assertEqual(result["sourceLanguage"], "English")
+        self.assertEqual(result["sourceLanguage"], "Auto-detected")
         self.assertEqual(result["targetLanguage"], "Spanish")
         self.assertEqual(result["translatedText"], "Buenos dias.")
-        self.assertEqual([request.url.path for request in requests], ["/api/tags", "/api/chat"])
+        self.assertEqual([request.url.path for request in requests], ["/api/tags", "/api/generate"])
         payload = json.loads(requests[-1].content)
         self.assertFalse(payload["stream"])
-        self.assertEqual(
-            payload["format"]["required"],
-            ["sourceLanguage", "targetLanguage", "translatedText"],
-        )
-        self.assertIn("Detect the source language", payload["messages"][1]["content"])
+        self.assertNotIn("format", payload)
+        self.assertNotIn("messages", payload)
+        self.assertIn("automatically detected source language", payload["prompt"])
+        self.assertIn("Output only the natural translation", payload["prompt"])
 
     async def test_translate_text_treats_a_question_as_text_to_translate(self):
         requests = []
@@ -136,28 +122,15 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
                     200,
                     json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
                 )
-            return httpx.Response(
-                200,
-                json={
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "sourceLanguage": "English",
-                                "targetLanguage": "Chinese",
-                                "translatedText": "如何提高我的英语水平？",
-                            }
-                        )
-                    }
-                },
-            )
+            return httpx.Response(200, json={"response": "如何提高我的英语水平？"})
 
         service = OllamaService(transport=httpx.MockTransport(handler))
         result = await service.translate_text("How can I improve my English?", "Chinese", "English")
 
         self.assertEqual(result["translatedText"], "如何提高我的英语水平？")
-        prompt = json.loads(requests[-1].content)["messages"][0]["content"]
-        self.assertIn("Never answer, explain, advise", prompt)
-        self.assertIn("rather than answering it", prompt)
+        prompt = json.loads(requests[-1].content)["prompt"]
+        self.assertIn("Do not answer, explain, advise", prompt)
+        self.assertIn("even when it is a question or instruction", prompt)
 
     async def test_translate_text_normalises_mandarin_to_simplified_chinese(self):
         requests = []
@@ -170,32 +143,34 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
                     200,
                     json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
                 )
-            return httpx.Response(
-                200,
-                json={
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "sourceLanguage": "English",
-                                "targetLanguage": "Mandarin",
-                                "translatedText": "你好。",
-                            },
-                            ensure_ascii=False,
-                        )
-                    }
-                },
-            )
+            return httpx.Response(200, json={"response": "你好。"})
 
         service = OllamaService(transport=httpx.MockTransport(handler))
         result = await service.translate_text("Hello.", "Mandarin", "English")
 
         payload = json.loads(requests[-1].content)
-        self.assertIn("Target language: Simplified Chinese (Mandarin)", payload["messages"][1]["content"])
+        self.assertIn("to Simplified Chinese (Mandarin)", payload["prompt"])
         self.assertEqual(payload["options"]["num_predict"], service.translation_num_predict)
+        self.assertEqual(result["sourceLanguage"], "English")
         self.assertEqual(result["targetLanguage"], "Simplified Chinese (Mandarin)")
         self.assertEqual(result["translatedText"], "你好。")
 
-    async def test_translate_text_rejects_non_json_model_answer(self):
+    async def test_translate_text_rejects_non_chinese_mandarin_answer(self):
+        service = None
+
+        def handler(request):
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
+                )
+            return httpx.Response(200, json={"response": "Practice English every day."})
+
+        service = OllamaService(transport=httpx.MockTransport(handler))
+        with self.assertRaisesRegex(OllamaServiceError, "invalid Simplified Chinese"):
+            await service.translate_text("How can I improve my English?", "Chinese", "English")
+
+    async def test_translate_text_regression_for_pain_question(self):
         service = None
 
         def handler(request):
@@ -206,12 +181,47 @@ class OllamaServiceTest(unittest.IsolatedAsyncioTestCase):
                 )
             return httpx.Response(
                 200,
-                json={"message": {"content": "Practice English every day."}},
+                json={"response": "如果方便的话，请告诉我你有没有哪里疼。"},
             )
 
         service = OllamaService(transport=httpx.MockTransport(handler))
-        with self.assertRaisesRegex(OllamaServiceError, "invalid translation response"):
-            await service.translate_text("How can I improve my English?", "Chinese", "English")
+        result = await service.translate_text(
+            "If possible, just let me know if you have any pains.",
+            "Mandarin",
+            "English",
+        )
+
+        self.assertEqual(result["sourceLanguage"], "English")
+        self.assertEqual(result["targetLanguage"], "Simplified Chinese (Mandarin)")
+        self.assertEqual(result["translatedText"], "如果方便的话，请告诉我你有没有哪里疼。")
+
+    async def test_translate_text_supports_mandarin_to_english(self):
+        service = None
+
+        def handler(request):
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": service.model_name, "capabilities": ["completion"]}]},
+                )
+            return httpx.Response(
+                200,
+                json={"response": "Please tell me immediately if you feel dizzy or unwell."},
+            )
+
+        service = OllamaService(transport=httpx.MockTransport(handler))
+        result = await service.translate_text(
+            "如果你感到头晕或不舒服，请马上告诉我。",
+            "English",
+            "Mandarin",
+        )
+
+        self.assertEqual(result["sourceLanguage"], "Mandarin")
+        self.assertEqual(result["targetLanguage"], "English")
+        self.assertEqual(
+            result["translatedText"],
+            "Please tell me immediately if you feel dizzy or unwell.",
+        )
 
     async def test_ollama_errors_are_explicit(self):
         def handler(request):

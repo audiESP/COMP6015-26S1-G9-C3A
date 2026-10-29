@@ -8,6 +8,12 @@ COPY speech ./speech
 COPY speech_server.py ./
 
 ENV SPEECH_ENABLED=true \
+    SPEECH_BACKEND=whisper_onnx \
+    SPEECH_WHISPER_ONNX_ENCODER=/models/whisper-base/base-encoder.int8.onnx \
+    SPEECH_WHISPER_ONNX_DECODER=/models/whisper-base/base-decoder.int8.onnx \
+    SPEECH_WHISPER_ONNX_TOKENS=/models/whisper-base/base-tokens.txt \
+    SPEECH_WHISPER_ONNX_DEFAULT_LANGUAGE=en \
+    SPEECH_WHISPER_ONNX_CACHE_SIZE=2 \
     SPEECH_ASR_MODEL=/models/omnilingual-asr/model.int8.onnx \
     SPEECH_ASR_TOKENS=/models/omnilingual-asr/tokens.txt \
     SPEECH_VAD_MODEL=/models/silero-vad/silero_vad.onnx \

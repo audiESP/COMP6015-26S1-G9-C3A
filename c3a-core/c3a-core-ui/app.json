@@ -3,6 +3,6 @@
     "expo-audio"
   ],
   "android": {
-    "softwareKeyboardLayoutMode": "resize"
+    "softwareKeyboardLayoutMode": "pan"
   }
 }

@@ -12,6 +12,10 @@ API_DIR="$CORE_DIR/c3a-core-api"
 AI_DIR="$CORE_DIR/c3a-core-ai"
 ENV_SYNC_SCRIPT="$SCRIPT_DIR/tools/sync_env.py"
 OLLAMA_MODEL="llama3.1:8b-instruct-q4_K_M"
+SPEECH_COMPOSE_FILE="$CORE_DIR/docker-compose.speech.yml"
+SPEECH_HEALTH_URL="http://127.0.0.1:8002/health"
+C3A_SPEECH_MODELS_DIR="${C3A_SPEECH_MODELS_DIR:-$HOME/.c3a/models}"
+export C3A_SPEECH_MODELS_DIR
 CHECK_ONLY=false
 ENV_SOURCE_DIR=""
 
@@ -70,12 +74,104 @@ run_env_sync() {
   fail "${output#ERROR: }"
 }
 
+validate_speech_models() {
+  local encoder="$C3A_SPEECH_MODELS_DIR/whisper-base/base-encoder.int8.onnx"
+  local decoder="$C3A_SPEECH_MODELS_DIR/whisper-base/base-decoder.int8.onnx"
+  local tokens="$C3A_SPEECH_MODELS_DIR/whisper-base/base-tokens.txt"
+  local size
+
+  [[ -f "$encoder" ]] || fail "Whisper encoder not found: $encoder"
+  [[ -f "$decoder" ]] || fail "Whisper decoder not found: $decoder"
+  [[ -f "$tokens" ]] || fail "Whisper tokens not found: $tokens"
+  size="$(wc -c < "$encoder")" || fail "Unable to read Whisper encoder: $encoder"
+  (( size >= 20000000 )) || fail "Whisper encoder is incomplete or corrupt: $encoder"
+  size="$(wc -c < "$decoder")" || fail "Unable to read Whisper decoder: $decoder"
+  (( size >= 100000000 )) || fail "Whisper decoder is incomplete or corrupt: $decoder"
+  size="$(wc -c < "$tokens")" || fail "Unable to read Whisper tokens: $tokens"
+  (( size >= 500000 )) || fail "Whisper tokens file is incomplete or corrupt: $tokens"
+}
+
+speech_is_healthy() {
+  "$API_PYTHON" - "$SPEECH_HEALTH_URL" >/dev/null 2>&1 <<'PY'
+import json
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=3) as response:
+    payload = json.load(response)
+if not (
+    payload.get("enabled")
+    and payload.get("loaded")
+    and payload.get("backend") == "whisper_onnx"
+    and payload.get("model") == "whisper-base-int8"
+):
+    raise SystemExit(1)
+PY
+}
+
+wait_for_docker() {
+  local attempt
+  for ((attempt = 1; attempt <= 180; attempt++)); do
+    "$DOCKER_BIN" info >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_speech() {
+  local attempt
+  for ((attempt = 1; attempt <= 120; attempt++)); do
+    speech_is_healthy && return 0
+    sleep 1
+  done
+  return 1
+}
+
+ensure_speech_service() {
+  if speech_is_healthy; then
+    printf 'Speech service is already healthy on port 8002.\n'
+    return 0
+  fi
+  if ! "$DOCKER_BIN" info >/dev/null 2>&1; then
+    [[ -d "/Applications/Docker.app" ]] || fail \
+      "Docker daemon is not running and Docker Desktop was not found in /Applications."
+    command -v open >/dev/null 2>&1 || fail "macOS open command is unavailable; start Docker Desktop manually."
+    printf 'Starting Docker Desktop...\n'
+    open -gj -a Docker || fail "Failed to open Docker Desktop."
+    wait_for_docker || fail \
+      "Docker Desktop did not become ready within 3 minutes. Open it, accept any first-run prompt, and retry."
+  fi
+  printf 'Building and starting the local speech service...\n'
+  "$DOCKER_BIN" compose -f "$SPEECH_COMPOSE_FILE" up -d --build || \
+    fail "Failed to build or start the local speech container."
+  if ! wait_for_speech; then
+    "$DOCKER_BIN" compose -f "$SPEECH_COMPOSE_FILE" logs --tail 40 c3a-speech || true
+    fail "Speech service did not load its models within 2 minutes."
+  fi
+  printf 'Speech service is healthy and its models are loaded.\n'
+}
+
 [[ -f "$UI_DIR/package.json" ]] || fail "UI entrypoint not found: $UI_DIR/package.json"
 [[ -f "$API_DIR/main.py" ]] || fail "API entrypoint not found: $API_DIR/main.py"
 [[ -f "$AI_DIR/main.py" ]] || fail "AI entrypoint not found: $AI_DIR/main.py"
 [[ -f "$API_DIR/requirements.txt" ]] || fail "API requirements not found: $API_DIR/requirements.txt"
 [[ -f "$AI_DIR/requirements.txt" ]] || fail "AI requirements not found: $AI_DIR/requirements.txt"
 [[ -f "$ENV_SYNC_SCRIPT" ]] || fail "Environment checker not found: $ENV_SYNC_SCRIPT"
+[[ -f "$SPEECH_COMPOSE_FILE" ]] || fail "Speech Compose file not found: $SPEECH_COMPOSE_FILE"
+[[ -f "$AI_DIR/Dockerfile.speech" ]] || fail "Speech Dockerfile not found: $AI_DIR/Dockerfile.speech"
+[[ -f "$AI_DIR/requirements.speech.txt" ]] || fail "Speech requirements not found: $AI_DIR/requirements.speech.txt"
+DOCKER_BIN="$(command -v docker || true)"
+if [[ -z "$DOCKER_BIN" && -x "/Applications/Docker.app/Contents/Resources/bin/docker" ]]; then
+  DOCKER_BIN="/Applications/Docker.app/Contents/Resources/bin/docker"
+  DOCKER_BIN_DIR="$(dirname "$DOCKER_BIN")"
+  export PATH="$DOCKER_BIN_DIR:$PATH"
+fi
+[[ -n "$DOCKER_BIN" ]] || fail "Docker was not found. Install Docker Desktop first."
+"$DOCKER_BIN" --version >/dev/null 2>&1 || fail "Docker was found but could not run."
+"$DOCKER_BIN" compose version >/dev/null 2>&1 || fail "Docker Compose is unavailable. Repair or update Docker Desktop."
+validate_speech_models
+"$DOCKER_BIN" compose -f "$SPEECH_COMPOSE_FILE" config --quiet >/dev/null 2>&1 || \
+  fail "Speech Compose configuration is invalid. Check C3A_SPEECH_MODELS_DIR and docker-compose.speech.yml."
 command -v node >/dev/null 2>&1 || fail "Node.js was not found on PATH. Install Node.js first."
 command -v npm >/dev/null 2>&1 || fail "npm was not found on PATH. Install Node.js first."
 node --version >/dev/null 2>&1 || fail "Node.js was found but could not run."
@@ -107,6 +203,19 @@ if [[ "$CHECK_ONLY" == true ]]; then
   fi
   printf 'Ollama:     %s\n' "$OLLAMA_BIN"
   printf 'AI model:   %s\n' "$OLLAMA_MODEL"
+  printf 'Docker:     %s (%s)\n' "$DOCKER_BIN" "$("$DOCKER_BIN" --version)"
+  printf 'Compose:    %s\n' "$("$DOCKER_BIN" compose version --short 2>/dev/null || "$DOCKER_BIN" compose version)"
+  printf 'Speech models: %s\n' "$C3A_SPEECH_MODELS_DIR"
+  if "$DOCKER_BIN" info >/dev/null 2>&1; then
+    printf 'Docker daemon: running\n'
+  else
+    printf 'Docker daemon: not running; normal startup will open Docker Desktop\n'
+  fi
+  if speech_is_healthy; then
+    printf 'Speech service: healthy and models loaded\n'
+  else
+    printf 'Speech service: not ready; normal startup will build or start it\n'
+  fi
   if "$OLLAMA_BIN" list >/dev/null 2>&1; then
     printf 'Ollama server: running\n'
     if "$OLLAMA_BIN" show "$OLLAMA_MODEL" >/dev/null 2>&1; then
@@ -138,6 +247,8 @@ else
     (cd "$UI_DIR" && npm install) || fail "Failed to install UI dependencies with npm install."
   fi
 fi
+
+ensure_speech_service
 
 PIDS=()
 
@@ -193,5 +304,5 @@ printf 'Starting C3A Expo UI...\n'
 (cd "$UI_DIR" && exec npm start) &
 PIDS+=("$!")
 
-printf 'All services started with model %s. Press Ctrl+C to stop them.\n' "$OLLAMA_MODEL"
+printf 'All services started with model %s. Speech is healthy on port 8002. Press Ctrl+C to stop them.\n' "$OLLAMA_MODEL"
 wait "${PIDS[@]}"

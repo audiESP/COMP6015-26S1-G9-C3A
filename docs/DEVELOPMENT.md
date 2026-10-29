@@ -193,19 +193,43 @@ same source filename before inserting the newly extracted chunks. It does not
 delete unrelated documents. Keep a source manifest containing file name,
 publisher, version/date, checksum, licence, and ingestion time.
 
-## 7. Optional speech container
+## 7. Speech container
 
 The speech image installs FFmpeg and the Python speech dependencies, while
 model files remain on the host and are mounted read-only. Expected layout:
 
 ```text
 <models>/
-├── omnilingual-asr/
-│   ├── model.int8.onnx
-│   └── tokens.txt
-└── silero-vad/
-    └── silero_vad.onnx
+└── whisper-base/
+    ├── base-encoder.int8.onnx
+    ├── base-decoder.int8.onnx
+    └── base-tokens.txt
 ```
+
+The default multilingual Whisper backend applies the selected source-language
+code during decoding. This is required for the fixed care-worker and patient
+languages shown in the UI. The older Omnilingual CTC backend can still be
+selected explicitly, but it does not support language conditioning and should
+not be used when the transcript must follow a configured language.
+
+Download the three `base` INT8 files from the official
+[`sherpa-onnx-whisper-base`](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/tree/main)
+repository and preserve the filenames shown above. The upstream
+[sherpa-onnx Whisper documentation](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/whisper/export-onnx.html)
+describes these exported multilingual models and their language-hint support.
+
+The Windows launcher uses `%USERPROFILE%\.c3a\models` by default; Linux and
+macOS use `$HOME/.c3a/models`. Before starting any application service, every
+launcher validates Docker, Docker Compose, the Compose definition, and all
+three model files. Windows additionally validates WSL 2. A normal run builds or
+reuses the speech image and waits until the health response reports both
+`enabled` and `loaded`. Windows and macOS start Docker Desktop when needed;
+Linux requires an already-running Docker daemon and access to its socket.
+`--check` performs the same prerequisite validation and reports daemon and
+speech readiness without starting Docker or the container.
+
+Set `C3A_SPEECH_MODELS_DIR` before running the launcher to use a different
+absolute model directory. For a manual container run:
 
 ```powershell
 $env:C3A_SPEECH_MODELS_DIR = 'C:\absolute\path\to\models'
@@ -218,11 +242,12 @@ public bind without authentication, TLS, request limits, and a privacy review.
 
 ## 8. Run and verify
 
-Run the operating-system launcher from the repository root. It starts or
-reuses Ollama, downloads `llama3.1:8b-instruct-q4_K_M` when missing, and then
-starts the AI service, API gateway, and UI. On Windows the Ollama console is
-started minimised; on Linux and macOS it runs as a background child process,
-so a separate foreground Ollama window may not be visible. Expected checks:
+Run the operating-system launcher from the repository root. It validates,
+starts, and verifies the speech container first; starts or reuses Ollama;
+downloads `llama3.1:8b-instruct-q4_K_M` when missing; and then starts the AI
+service, API gateway, and UI. On Windows the Ollama console is started
+minimised; on Linux and macOS it runs as a background child process, so a
+separate foreground Ollama window may not be visible. Expected checks:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8001/ai/health | ConvertTo-Json -Depth 6

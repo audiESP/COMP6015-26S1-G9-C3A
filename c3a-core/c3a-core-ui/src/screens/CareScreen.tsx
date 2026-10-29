@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeftRight, ArrowRight, BookOpen, CalendarDays, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, History, Image, Languages, MapPin, Paperclip, ShieldAlert, Sparkles, UserRound } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -35,6 +35,7 @@ export function CareScreen() {
   const { scenario: s, visitQueue, activeAlerts, isLoading, isSaving } = workflow;
   const [page, setPage] = useState<Page>('today');
   const [panel, setPanel] = useState<Panel>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -94,6 +95,19 @@ export function CareScreen() {
     return () => { cancelled = true; };
   }, [patientId]);
   useEffect(() => { fade.setValue(reducedMotion ? 1 : 0); Animated.timing(fade, { toValue: 1, duration: reducedMotion ? 0 : 200, useNativeDriver: true }).start(); }, [page, fade, reducedMotion]);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 50);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
   const send = (text: string, files: Attachment[]) => { if (!s || chatLoading) return; void sendMessage(text, files); setAttachments([]); };
   const revealChatInput = () => {
     // Wait until the keyboard has resized the viewport before revealing the
@@ -146,7 +160,7 @@ export function CareScreen() {
   return <SafeAreaView style={tw`flex-1 bg-care-canvas`} edges={['top', 'left', 'right', 'bottom']}>
     <KeyboardAvoidingView
       style={tw`flex-1`}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
       <View style={tw`flex-1 w-full max-w-[600px] self-center`}>
@@ -197,9 +211,9 @@ export function CareScreen() {
           </ScrollView>
         </View>
         {page === 'assistant' && s && <ChatInput key={visitId} onSend={send} onPressPlus={() => open('attachments')} onFocus={revealChatInput} isLoading={chatLoading || locked} pendingAttachments={attachments} onRemoveAttachment={id => setAttachments(old => old.filter(a => a.id !== id))} />}
-        <View style={tw`bg-white border border-care-line rounded-[23px] mx-4 mt-2 mb-2 p-1.5 flex-row`}>
+        {!keyboardVisible && <View style={tw`bg-white border border-care-line rounded-[23px] mx-4 mt-2 mb-2 p-1.5 flex-row`}>
           {navItems.map(({ id, label, icon: Icon }) => { const active = page === id || (id === 'today' && !['training', 'translate', 'assistant'].includes(page)); return <Pressable key={id} accessibilityRole="tab" accessibilityState={{ selected: active, disabled: locked }} disabled={locked} onPress={() => navigate(id)} style={tw.style('flex-1 py-2.5 min-h-[56px] items-center justify-center gap-1 rounded-control', active && 'bg-care-soft')}><Icon size={20} strokeWidth={1.7} color={active ? '#176B58' : '#697C75'} /><Text style={tw.style('text-[11px] font-medium', active ? 'text-care-primary' : 'text-care-muted')}>{label}</Text></Pressable>; })}
-        </View>
+        </View>}
       </View>
     </KeyboardAvoidingView>
     <Sheet visible={panel !== null} busy={busy || isSaving} title={panel ? ({ patient: 'Patient quick view', task: 'Record care task', issue: 'Report a task issue', arrival: 'Start this visit', finish: 'Finish this visit', history: 'Conversation history', attachments: 'Add an attachment', analysis: 'Review a care observation', risk: 'Record alert action', shift: 'Shift overview', date: 'Choose visit date' }[panel]) : ''} onClose={() => setPanel(null)}>

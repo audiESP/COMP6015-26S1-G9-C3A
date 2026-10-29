@@ -56,7 +56,7 @@ export function Sheet({ visible, title, onClose, children, footer, busy = false 
   return <Modal visible={visible} transparent animationType={reduced ? 'none' : 'slide'} onRequestClose={() => !busy && onClose()} statusBarTranslucent>
     <KeyboardAvoidingView
       style={tw`flex-1 justify-end bg-black/35`}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
       <Pressable accessibilityLabel="Close panel" accessibilityRole="button" disabled={busy} onPress={onClose} style={tw`absolute inset-0`} />

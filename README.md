@@ -78,9 +78,10 @@ generation, then returns the answer with structured source references.
 
 ## Quick start
 
-The root launchers start Ollama, the AI service, the API, and the UI on Windows,
-Linux, or macOS. See the [development guide](docs/DEVELOPMENT.md) for full
-database, RAG, speech, and troubleshooting details.
+The root launchers validate and start the speech container, then start Ollama,
+the AI service, the API, and the UI on Windows, Linux, or macOS. See the
+[development guide](docs/DEVELOPMENT.md) for full database, RAG, speech, and
+troubleshooting details.
 
 ### 1. Install prerequisites
 
@@ -90,7 +91,8 @@ database, RAG, speech, and troubleshooting details.
 - Access to a development PostgreSQL database containing the prerequisite
   `c3a_synthea_*` schema.
 - Qdrant credentials if RAG is enabled.
-- Docker only if local speech recognition is required.
+- Docker Desktop/Engine with Docker Compose. The root launchers require it for
+  the local speech-service preflight.
 
 ### 2. Install dependencies and create local configuration
 
@@ -160,7 +162,13 @@ environment. If `node_modules` is missing or invalid, it runs `npm ci` using the
 checked-in lockfile; if no lockfile exists, it falls back to `npm install`.
 Only after these dependency steps succeed does it start or reuse the Ollama
 server, pull `llama3.1:8b-instruct-q4_K_M` when missing, and start the AI, API,
-and Expo UI services. A failed dependency installation stops the launch.
+and Expo UI services. Every launcher validates Docker, Docker Compose, the
+Compose definition, and the speech model files; starts the speech container;
+and waits for its models to load before opening the application services.
+Windows additionally validates WSL 2. macOS can open Docker Desktop when its
+daemon is stopped, while Linux reports that Docker must be started and that the
+current user needs Docker-socket access. A failed dependency installation or
+speech preflight stops the launch.
 
 Windows:
 
@@ -188,6 +196,9 @@ stop the processes started by the launcher. Add `--check` to any launcher to
 check environment completeness, report any synchronization that a normal run
 would perform, and check commands, files, pip, and UI dependencies without
 copying or installing anything, starting services, or downloading the model.
+On every platform this also reports Docker daemon and speech-service readiness.
+The default speech model directory is `%USERPROFILE%\.c3a\models` on Windows
+and `$HOME/.c3a/models` on Linux and macOS.
 
 #### Using `.env` files kept outside the repository
 

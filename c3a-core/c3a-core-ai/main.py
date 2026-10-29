@@ -593,7 +593,7 @@ async def transcribe_speech(
         clientRequestId, sourceLanguage, speakerRole, payload.get("durationMs"), len(payload.get("transcript", "")), (time.perf_counter() - started_at) * 1000,
     )
     return SpeechTranscriptionResponse(
-        transcript=payload["transcript"], sourceLanguage=sourceLanguage, speakerRole=speakerRole, model=payload.get("model", "omnilingual-asr-300m-int8"),
+        transcript=payload["transcript"], sourceLanguage=sourceLanguage, speakerRole=speakerRole, model=payload.get("model", "whisper-base-int8"),
     )
 
 
